@@ -3,7 +3,7 @@
 set -euo pipefail
 
 plugin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-helper="$plugin_dir/ai_accounts.py"
+helper="$plugin_dir/ai_accounts.sh"
 login_home=""
 
 cleanup() {
@@ -17,10 +17,10 @@ trap cleanup EXIT
 run_helper() {
   local output status
   set +e
-  output="$(python3 "$helper" "$@")"
+  output="$(bash "$helper" "$@")"
   status=$?
   set -e
-  python3 -c 'import json, sys; value=json.load(sys.stdin); print(value.get("message") or value.get("error") or "Done")' <<<"$output"
+  jq -r '.message // .error // "Done"' <<<"$output"
   return "$status"
 }
 

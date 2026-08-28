@@ -45,13 +45,13 @@ before_hash="$(sha256sum "$current_home/auth.json" | cut -d' ' -f1)"
 env \
   PATH="$fake_bin:$PATH" \
   CODEX_HOME="$current_home" \
-  OMARCHY_CODEX_SWITCHER_DIR="$switcher_dir" \
-  python3 "$project_dir/codex_accounts.py" import-current >/dev/null
+  OMARCHY_AI_SWITCHER_DIR="$switcher_dir" \
+  bash "$project_dir/ai_accounts.sh" import-current codex >/dev/null
 
 printf 'Second\n\n' | env \
   PATH="$fake_bin:$PATH" \
   CODEX_HOME="$current_home" \
-  OMARCHY_CODEX_SWITCHER_DIR="$switcher_dir" \
+  OMARCHY_AI_SWITCHER_DIR="$switcher_dir" \
   FAKE_CODEX_AUTH="$new_auth" \
   FAKE_CODEX_LOG="$fake_log" \
   bash "$project_dir/AddCodexAccount.sh" >"$test_dir/output.txt"
@@ -60,10 +60,10 @@ after_hash="$(sha256sum "$current_home/auth.json" | cut -d' ' -f1)"
 
 [[ $before_hash == "$after_hash" ]]
 [[ $(<"$fake_log") == "login" ]]
-jq -e '.accounts | length == 2' "$switcher_dir/accounts.json" >/dev/null
-jq -e '.accounts[] | select(.name == "Second")' "$switcher_dir/accounts.json" >/dev/null
+jq -e '.accounts | length == 2' "$switcher_dir/codex-accounts.json" >/dev/null
+jq -e '.accounts[] | select(.name == "Second")' "$switcher_dir/codex-accounts.json" >/dev/null
 jq -e '.active_account_id as $active | .accounts[] | select(.id == $active and .name != "Second")' \
-  "$switcher_dir/accounts.json" >/dev/null
+  "$switcher_dir/codex-accounts.json" >/dev/null
 if rg -q 'Press Enter to continue|Name for the current' "$test_dir/output.txt"; then exit 1; fi
 rg -q 'new account is saved' "$test_dir/output.txt"
 

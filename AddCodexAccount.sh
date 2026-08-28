@@ -3,7 +3,7 @@
 set -euo pipefail
 
 plugin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-helper="$plugin_dir/codex_accounts.py"
+helper="$plugin_dir/ai_accounts.sh"
 login_home=""
 
 cleanup() {
@@ -17,10 +17,10 @@ trap cleanup EXIT
 run_helper() {
   local output status
   set +e
-  output="$(python3 "$helper" "$@")"
+  output="$(bash "$helper" "$@")"
   status=$?
   set -e
-  python3 -c 'import json, sys; value=json.load(sys.stdin); print(value.get("message") or value.get("error") or "Done")' <<<"$output"
+  jq -r '.message // .error // "Done"' <<<"$output"
   return "$status"
 }
 
@@ -29,7 +29,7 @@ echo "AI Account Switcher · Codex"
 echo
 
 if [[ -f ${CODEX_HOME:-$HOME/.codex}/auth.json ]]; then
-  run_helper import-current
+  run_helper import-current codex
 fi
 
 login_home="$(mktemp -d)"
@@ -37,7 +37,7 @@ CODEX_HOME="$login_home" codex login
 
 echo
 read -r -p "Name for the new login (Enter uses its email): " new_name
-CODEX_HOME="$login_home" run_helper import-current "$new_name" --inactive
+CODEX_HOME="$login_home" run_helper import-current codex "$new_name" --inactive
 
 echo
 echo "The new account is saved. Select it from the bar when no Codex sessions are running."

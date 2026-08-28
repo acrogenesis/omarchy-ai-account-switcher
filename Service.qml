@@ -9,7 +9,7 @@ Item {
   readonly property string codexStorePath: home + "/.config/omarchy/ai-account-switcher/codex-accounts.json"
   readonly property string claudeStorePath: home + "/.config/omarchy/ai-account-switcher/claude-accounts.json"
   readonly property string helperPath: decodeURIComponent(
-    String(Qt.resolvedUrl("ai_accounts.py")).replace(/^file:\/\//, ""))
+    String(Qt.resolvedUrl("ai_accounts.sh")).replace(/^file:\/\//, ""))
   readonly property string codexSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("AddCodexAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string claudeSetupPath: decodeURIComponent(
@@ -83,7 +83,7 @@ Item {
     root.busy = true
     root.switchingId = switchingId || ""
     root.lastError = ""
-    actionProcess.command = ["python3", root.helperPath].concat(arguments)
+    actionProcess.command = ["bash", root.helperPath].concat(arguments)
     actionProcess.running = true
   }
 
@@ -112,7 +112,7 @@ Item {
   }
 
   property Process statusProcess: Process {
-    command: ["python3", root.helperPath, "status"]
+    command: ["bash", root.helperPath, "status"]
     stdout: StdioCollector { id: statusOutput; waitForEnd: true }
     stderr: StdioCollector { id: statusError; waitForEnd: true }
     onExited: function(exitCode) {

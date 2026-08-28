@@ -22,10 +22,10 @@ This repository is the Omarchy Quattro plugin
 
 ## Validation
 
-Run the Python suite, both add-account integration tests, Bash syntax checks,
-Python compilation, `omarchy plugin validate .`, and QML linting for changed
-files. For bar or panel changes, also reload the shell and verify the live IPC
-and rendered panel.
+Run `tests/test_accounts.sh`, both add-account integration tests, Bash syntax
+checks, `omarchy plugin validate .`, and QML linting for changed files. For bar
+or panel changes, also reload the shell and verify the live IPC and rendered
+panel.
 
 Do not commit, push, publish, release, or create project-management work unless
 the user explicitly requests it.

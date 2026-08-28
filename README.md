@@ -19,7 +19,7 @@ and Claude Code accounts.
 ## Requirements
 
 - Omarchy Quattro with plugin support
-- Python 3
+- `bash`, `jq`, `flock`, `base64`, and `sha256sum` (included in Omarchy's base system)
 - `codex` for Codex accounts
 - `claude` for Claude accounts
 
@@ -101,11 +101,10 @@ Provider values are `codex` and `claude`.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v
+bash tests/test_accounts.sh
 bash tests/test_add_codex_account.sh
 bash tests/test_add_claude_account.sh
-bash -n AddCodexAccount.sh AddClaudeAccount.sh tests/*.sh
-python3 -m py_compile ai_accounts.py codex_accounts.py claude_accounts.py tests/test_*.py
+bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh tests/*.sh
 omarchy plugin validate .
 ```
 
