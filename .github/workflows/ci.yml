@@ -23,6 +23,6 @@ jobs:
       - name: Run per-account launcher integration test
         run: bash tests/test_launch_account.sh
       - name: Validate shell scripts
-        run: bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh tests/*.sh
+        run: bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh CommandWrapper.sh InstallCommandWrappers.sh tests/*.sh
       - name: Validate manifest JSON
         run: jq -e . manifest.json >/dev/null

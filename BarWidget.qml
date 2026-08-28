@@ -74,6 +74,11 @@ BarWidget {
       root.accountService.launchSelectedAccount()
       return "started"
     }
+    function enableCommandSwitching(): string {
+      if (!root.ready) return "service unavailable"
+      root.accountService.enableCommandSwitching()
+      return "started"
+    }
     function status(): string {
       if (!root.ready) return "service unavailable"
       return "provider=" + root.accountService.provider

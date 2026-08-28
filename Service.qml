@@ -16,6 +16,8 @@ Item {
     String(Qt.resolvedUrl("AddClaudeAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string launchPath: decodeURIComponent(
     String(Qt.resolvedUrl("LaunchAccount.sh")).replace(/^file:\/\//, ""))
+  readonly property string wrapperSetupPath: decodeURIComponent(
+    String(Qt.resolvedUrl("InstallCommandWrappers.sh")).replace(/^file:\/\//, ""))
 
   property string provider: "codex"
   readonly property string providerLabel: provider === "claude" ? "Claude" : "Codex"
@@ -30,6 +32,7 @@ Item {
   property int runningCount: 0
   property bool busy: false
   property bool launching: false
+  property bool commandWrappersEnabled: false
   property string switchingId: ""
   property string lastError: ""
   property bool hasActionError: false
@@ -68,6 +71,7 @@ Item {
 
   function applyStatus(payload) {
     root.providerStatuses = payload.providers || ({})
+    root.commandWrappersEnabled = payload.command_wrappers_enabled === true
     root.applyProviderStatus(root.providerStatuses[root.provider])
   }
 
@@ -133,6 +137,16 @@ Item {
     launchProcess.running = true
   }
 
+  function enableCommandSwitching() {
+    if (root.busy || wrapperProcess.running) return
+    root.busy = true
+    root.lastError = ""
+    root.hasActionError = false
+    root.lastAction = ""
+    wrapperProcess.command = ["bash", root.wrapperSetupPath, "install"]
+    wrapperProcess.running = true
+  }
+
   property Process statusProcess: Process {
     command: ["bash", root.helperPath, "status"]
     stdout: StdioCollector { id: statusOutput; waitForEnd: true }
@@ -180,6 +194,25 @@ Item {
         root.hasActionError = true
       }
       refreshTimer.restart()
+    }
+  }
+
+  property Process wrapperProcess: Process {
+    stdout: StdioCollector { id: wrapperOutput; waitForEnd: true }
+    stderr: StdioCollector { id: wrapperError; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parseResult(wrapperOutput.text)
+      root.busy = false
+      if (exitCode === 0 && payload.ok === true) {
+        root.lastAction = String(payload.message || "Terminal commands enabled")
+        root.lastError = ""
+        root.hasActionError = false
+      } else {
+        root.lastError = String(payload.error || wrapperError.text
+          || "Could not enable terminal command switching").trim()
+        root.hasActionError = true
+      }
+      root.refresh()
     }
   }
 

@@ -408,11 +408,19 @@ provider_status() {
 }
 
 combined_status() {
-  local codex claude
+  local codex claude wrappers=false marker='omarchy-ai-account-switcher command router v1'
+  local wrapper_bin="${OMARCHY_AI_SWITCHER_BIN_DIR:-$HOME/.local/bin}"
   codex=$(provider_status codex)
   claude=$(provider_status claude)
+  if [[ -f $wrapper_bin/codex && ! -L $wrapper_bin/codex &&
+    -f $wrapper_bin/claude && ! -L $wrapper_bin/claude ]] &&
+    grep -Fq "$marker" "$wrapper_bin/codex" 2>/dev/null &&
+    grep -Fq "$marker" "$wrapper_bin/claude" 2>/dev/null; then
+    wrappers=true
+  fi
   jq -cn --slurpfile codex <(printf '%s\n' "$codex") --slurpfile claude <(printf '%s\n' "$claude") \
-    '{ok: true, providers: {codex: $codex[0], claude: $claude[0]}}'
+    --argjson wrappers "$wrappers" \
+    '{ok: true, command_wrappers_enabled: $wrappers, providers: {codex: $codex[0], claude: $claude[0]}}'
 }
 
 import_current() {

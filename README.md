@@ -10,6 +10,8 @@ and Claude Code accounts.
 - Gives every account a stable isolated `CODEX_HOME` or `CLAUDE_CONFIG_DIR`.
 - Opens the selected account in a new terminal without rewriting the shared
   Codex or Claude login.
+- Optionally routes ordinary `codex` and `claude` commands to the selected
+  account, while honoring an explicitly set provider home.
 - Lets existing sessions keep the account they started with while other
   accounts run alongside them.
 - Retains credentials refreshed inside each account home and seeds Claude
@@ -40,9 +42,11 @@ an isolated temporary home; there is no pre-login confirmation prompt. After
 login, the plugin promotes it to a stable private account home. No operation
 requires closing active Codex or Claude sessions.
 
-Running `codex` or `claude` directly in an unrelated terminal continues to use
-the provider's normal shared login. Use the panel's **Open** action when you
-want a saved switcher account.
+Press **Make plain codex and claude commands follow selection** once to install
+recoverable command routers in `~/.local/bin`. After that, ordinary new
+`codex` and `claude` processes use the menubar selection from any terminal.
+Processes already running—and new conversations created inside one of those
+existing processes—keep the account that process started with.
 
 ## Local data
 
@@ -57,6 +61,9 @@ Saved credentials are kept outside the plugin checkout:
     └── claude/ACCOUNT_ID/
 ```
 
+If terminal command routing is enabled, an existing command at the destination
+is preserved under `wrapper-backups/` before the switcher installs its router.
+
 The homes contain each account's credentials, refreshed tokens, and session
 state. Common user configuration such as Codex skills/rules and Claude
 settings/plugins is linked from the normal provider home when an account home
@@ -67,6 +74,15 @@ Removing the plugin does not delete saved credentials. Delete the directory
 above separately if you also want to remove the saved account copies.
 
 ## Remove
+
+If terminal command routing is enabled, first restore the commands exactly as
+they were before enabling it:
+
+```bash
+bash ~/.config/omarchy/plugins/acrogenesis.ai-account-switcher/InstallCommandWrappers.sh remove
+```
+
+Then remove the plugin:
 
 ```bash
 omarchy plugin remove acrogenesis.ai-account-switcher
@@ -89,7 +105,8 @@ user explicitly saves that login. Selecting or opening a saved account does not
 rewrite those shared files. Saved credentials never leave the machine, are
 excluded from command and QML output, and are written under private `0700`
 directories with `0600` files. Account changes are locked and atomic, and
-destination symlinks are rejected.
+destination symlinks are rejected. Terminal routing is installed only through
+the explicit panel action; replaced commands are backed up and restorable.
 
 Review the source before installation. Omarchy plugins execute as unsandboxed
 user code; marketplace validation is compatibility checking, not a security
@@ -105,6 +122,7 @@ omarchy-shell acrogenesis.ai-account-switcher selectProvider claude
 omarchy-shell acrogenesis.ai-account-switcher saveCurrent codex "Personal"
 omarchy-shell acrogenesis.ai-account-switcher switchAccount claude ACCOUNT_ID
 omarchy-shell acrogenesis.ai-account-switcher launchSelected claude
+omarchy-shell acrogenesis.ai-account-switcher enableCommandSwitching
 ```
 
 Provider values are `codex` and `claude`.
@@ -116,7 +134,7 @@ bash tests/test_accounts.sh
 bash tests/test_add_codex_account.sh
 bash tests/test_add_claude_account.sh
 bash tests/test_launch_account.sh
-bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh tests/*.sh
+bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh CommandWrapper.sh InstallCommandWrappers.sh tests/*.sh
 omarchy plugin validate .
 ```
 

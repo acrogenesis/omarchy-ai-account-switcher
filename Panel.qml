@@ -267,6 +267,28 @@ Panel {
           }
 
           Button {
+            visible: root.service && !root.service.commandWrappersEnabled
+            width: parent.width
+            text: "Make plain codex and claude commands follow selection"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            focusable: true
+            enabled: root.service && !root.service.busy
+            onClicked: root.service.enableCommandSwitching()
+          }
+
+          Text {
+            visible: root.service && root.service.commandWrappersEnabled
+            width: parent.width
+            text: "New plain codex and claude processes also use the selected accounts."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
             width: parent.width
             text: "Add another " + (root.service ? root.service.providerLabel : "AI") + " account"
             foreground: root.foreground

@@ -15,6 +15,9 @@ This repository is the Omarchy Quattro plugin
   rewrite the shared `~/.codex` or `~/.claude` credentials.
 - Launch Codex with the account's `CODEX_HOME` and Claude with the account's
   `CLAUDE_CONFIG_DIR`, so running sessions retain the login they started with.
+- Installed command routers must honor an already-set provider home, resolve
+  the real CLI without recursion, and preserve any replaced command as a
+  recoverable private backup.
 - Retain refreshed tokens from each stable account home and seed Claude homes
   with existing unrelated `mcpOAuth` data without modifying the shared file.
 - Credential directories and files must remain `0700` and `0600` respectively,
@@ -22,7 +25,7 @@ This repository is the Omarchy Quattro plugin
 
 ## Validation
 
-Run `tests/test_accounts.sh`, the launcher integration test, both add-account
+Run `tests/test_accounts.sh`, the launcher/router integration test, both add-account
 integration tests, Bash syntax checks, `omarchy plugin validate .`, and QML
 linting for changed files. For bar or panel changes, also reload the shell and
 verify the live IPC and rendered panel.

@@ -55,4 +55,52 @@ jq -e --arg home "$claude_home" '
 ' <<<"$(tail -n 1 <<<"$claude_output")" >/dev/null
 [[ $(sha256sum "$live_claude/.credentials.json" | cut -d' ' -f1) == "$claude_live_hash" ]]
 
-echo "Per-account launcher isolation test passed"
+# Installed command routers make plain CLI invocations follow the selection,
+# while explicit provider homes bypass routing and removal restores old commands.
+wrapper_bin="$test_dir/wrapper-bin"
+mkdir -p "$wrapper_bin"
+printf '#!/bin/bash\necho original-claude\n' >"$wrapper_bin/claude"
+chmod 755 "$wrapper_bin/claude"
+
+router_env=(
+  PATH="$wrapper_bin:$fake_bin:/usr/bin"
+  HOME="$test_dir"
+  OMARCHY_AI_SWITCHER_DIR="$switcher_dir"
+  OMARCHY_AI_SWITCHER_BIN_DIR="$wrapper_bin"
+  OMARCHY_AI_SWITCHER_PLUGIN_DIR="$project_dir"
+  FAKE_CODEX_LOG="$test_dir/codex.log"
+  FAKE_CLAUDE_LOG="$test_dir/claude.log"
+)
+
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" install >/dev/null
+env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
+  jq -e '.command_wrappers_enabled == true' >/dev/null
+
+plain_codex=$(env "${router_env[@]}" "$wrapper_bin/codex")
+jq -e --arg home "$codex_home" '
+  select(.launched == true and .home == $home and .account_id == "codex-one")
+' <<<"$plain_codex" >/dev/null
+
+plain_claude=$(env "${router_env[@]}" "$wrapper_bin/claude")
+jq -e --arg home "$claude_home" '
+  select(.launched == true and .home == $home and .email == "one@example.com")
+' <<<"$plain_claude" >/dev/null
+
+explicit_claude=$(env "${router_env[@]}" CLAUDE_CONFIG_DIR="$live_claude" "$wrapper_bin/claude")
+jq -e --arg home "$live_claude" 'select(.launched == true and .home == $home)' \
+  <<<"$explicit_claude" >/dev/null
+
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" remove >/dev/null
+[[ ! -e $wrapper_bin/codex ]]
+rg -q 'original-claude' "$wrapper_bin/claude"
+
+# A stale backup must never cause a subsequently changed command to be lost.
+mkdir -p "$switcher_dir/wrapper-backups"
+printf '#!/bin/bash\necho previous-claude\n' >"$switcher_dir/wrapper-backups/claude"
+if env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" install >/dev/null 2>&1; then
+  echo "Expected router installation to reject a changed command with a stale backup" >&2
+  exit 1
+fi
+rg -q 'original-claude' "$wrapper_bin/claude"
+
+echo "Per-account launcher and command-router isolation tests passed"
