@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install --yes jq ripgrep
+      - name: Validate Python
+        run: python3 -m py_compile ai_accounts.py codex_accounts.py claude_accounts.py tests/test_*.py
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Run add-account integration tests
+        run: |
+          bash tests/test_add_codex_account.sh
+          bash tests/test_add_claude_account.sh
+      - name: Validate shell scripts
+        run: bash -n AddCodexAccount.sh AddClaudeAccount.sh tests/*.sh
+      - name: Validate manifest JSON
+        run: python3 -m json.tool manifest.json >/dev/null
