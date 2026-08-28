@@ -29,6 +29,7 @@ Item {
   property bool busy: false
   property string switchingId: ""
   property string lastError: ""
+  property bool hasActionError: false
   property string lastAction: ""
 
   function parseResult(text) {
@@ -58,7 +59,8 @@ Item {
     }
     root.activeName = active ? String(active.name || "Account")
       : (root.hasCurrentLogin ? "Unsaved login" : "No " + root.providerLabel + " login")
-    if (payload.ok === false) root.lastError = String(payload.error || "Could not load accounts")
+    if (payload.ok === false && !root.hasActionError)
+      root.lastError = String(payload.error || "Could not load accounts")
   }
 
   function applyStatus(payload) {
@@ -70,6 +72,7 @@ Item {
     var next = value === "claude" ? "claude" : "codex"
     root.provider = next
     root.lastError = ""
+    root.hasActionError = false
     root.lastAction = ""
     root.applyProviderStatus(root.providerStatuses[next])
   }
@@ -83,6 +86,8 @@ Item {
     root.busy = true
     root.switchingId = switchingId || ""
     root.lastError = ""
+    root.hasActionError = false
+    root.lastAction = ""
     actionProcess.command = ["bash", root.helperPath].concat(arguments)
     actionProcess.running = true
   }
@@ -106,6 +111,9 @@ Item {
 
   function addAnotherAccount() {
     if (setupProcess.running) return
+    root.lastError = ""
+    root.hasActionError = false
+    root.lastAction = ""
     setupProcess.command = ["omarchy-launch-terminal", "bash",
       root.provider === "claude" ? root.claudeSetupPath : root.codexSetupPath]
     setupProcess.running = true
@@ -119,9 +127,10 @@ Item {
       var payload = root.parseResult(statusOutput.text)
       if (exitCode === 0 && payload.ok === true) {
         root.applyStatus(payload)
-        root.lastError = ""
+        if (!root.hasActionError) root.lastError = ""
       } else {
-        root.lastError = String(payload.error || statusError.text || "Could not load accounts").trim()
+        if (!root.hasActionError)
+          root.lastError = String(payload.error || statusError.text || "Could not load accounts").trim()
       }
     }
   }
@@ -136,8 +145,10 @@ Item {
       if (exitCode === 0 && payload.ok === true) {
         root.lastAction = String(payload.message || "Done")
         root.lastError = ""
+        root.hasActionError = false
       } else {
         root.lastError = String(payload.error || actionError.text || "Account action failed").trim()
+        root.hasActionError = true
       }
       root.refresh()
     }
