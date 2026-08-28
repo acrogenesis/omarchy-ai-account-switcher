@@ -14,6 +14,8 @@ Item {
     String(Qt.resolvedUrl("AddCodexAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string claudeSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("AddClaudeAccount.sh")).replace(/^file:\/\//, ""))
+  readonly property string launchPath: decodeURIComponent(
+    String(Qt.resolvedUrl("LaunchAccount.sh")).replace(/^file:\/\//, ""))
 
   property string provider: "codex"
   readonly property string providerLabel: provider === "claude" ? "Claude" : "Codex"
@@ -27,6 +29,7 @@ Item {
   property bool canSwitch: true
   property int runningCount: 0
   property bool busy: false
+  property bool launching: false
   property string switchingId: ""
   property string lastError: ""
   property bool hasActionError: false
@@ -119,6 +122,17 @@ Item {
     setupProcess.running = true
   }
 
+  function launchSelectedAccount() {
+    if (root.launching || root.activeAccountId === "") return
+    root.lastError = ""
+    root.hasActionError = false
+    root.lastAction = ""
+    root.launching = true
+    launchProcess.command = ["omarchy-launch-terminal", "bash", root.launchPath,
+      root.provider, root.activeAccountId]
+    launchProcess.running = true
+  }
+
   property Process statusProcess: Process {
     command: ["bash", root.helperPath, "status"]
     stdout: StdioCollector { id: statusOutput; waitForEnd: true }
@@ -156,6 +170,17 @@ Item {
 
   property Process setupProcess: Process {
     onExited: refreshTimer.restart()
+  }
+
+  property Process launchProcess: Process {
+    onExited: function(exitCode) {
+      root.launching = false
+      if (exitCode !== 0) {
+        root.lastError = "Could not open the selected " + root.providerLabel + " account"
+        root.hasActionError = true
+      }
+      refreshTimer.restart()
+    }
   }
 
   FileView {

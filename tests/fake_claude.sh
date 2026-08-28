@@ -16,6 +16,10 @@ elif [[ ${1:-} == "auth" && ${2:-} == "status" ]]; then
     orgName: .oauthAccount.organizationName,
     subscriptionType: "team"
   }' "$CLAUDE_CONFIG_DIR/.claude.json"
+elif [[ $# == 0 ]]; then
+  jq -cn --arg home "$CLAUDE_CONFIG_DIR" \
+    --arg email "$(jq -r '.oauthAccount.emailAddress // empty' "$CLAUDE_CONFIG_DIR/.claude.json")" \
+    '{launched: true, home: $home, email: $email}'
 else
   echo "Unexpected fake Claude command: $*" >&2
   exit 2

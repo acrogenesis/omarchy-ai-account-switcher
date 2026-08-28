@@ -68,6 +68,12 @@ BarWidget {
       root.accountService.switchAccount(accountId)
       return "started"
     }
+    function launchSelected(provider: string): string {
+      if (!root.ready) return "service unavailable"
+      root.accountService.selectProvider(provider)
+      root.accountService.launchSelectedAccount()
+      return "started"
+    }
     function status(): string {
       if (!root.ready) return "service unavailable"
       return "provider=" + root.accountService.provider
@@ -84,7 +90,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󱚣"
-    dimmed: !root.ready || !root.accountService.hasCurrentLogin
+    dimmed: !root.ready || root.accountService.accounts.length === 0
     active: root.ready && root.accountService.lastError !== ""
     tooltipText: !root.ready ? "AI accounts unavailable"
       : root.accountService.providerLabel + " · " + root.accountService.activeName

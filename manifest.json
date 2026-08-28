@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "acrogenesis.ai-account-switcher",
   "name": "AI Account Switcher",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "acrogenesis",
   "license": "MIT",
-  "description": "Save and switch personal Codex and Claude Code accounts from the Omarchy bar.",
+  "description": "Open isolated Codex and Claude Code accounts from the Omarchy bar without closing active sessions.",
   "kinds": [
     "service",
     "bar-widget"

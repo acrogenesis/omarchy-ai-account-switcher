@@ -5,6 +5,7 @@ set -euo pipefail
 plugin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 helper="$plugin_dir/ai_accounts.sh"
 login_home=""
+source_home="${CODEX_HOME:-$HOME/.codex}"
 
 cleanup() {
   if [[ -n $login_home && -d $login_home ]]; then
@@ -37,8 +38,9 @@ CODEX_HOME="$login_home" codex login
 
 echo
 read -r -p "Name for the new login (Enter uses its email): " new_name
-CODEX_HOME="$login_home" run_helper import-current codex "$new_name" --inactive
+CODEX_HOME="$login_home" OMARCHY_AI_SOURCE_CODEX_HOME="$source_home" \
+  run_helper import-current codex "$new_name" --inactive
 
 echo
-echo "The new account is saved. Select it from the bar when no Codex sessions are running."
+echo "The new account is saved. Select and open it from the bar whenever you want."
 read -r -p "Press Enter to close..."

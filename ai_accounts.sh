@@ -2,8 +2,8 @@
 
 set -Eeu -o pipefail
 
-STORE_VERSION=1
 CONFIG_DIR="${OMARCHY_AI_SWITCHER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/ai-account-switcher}"
+HOMES_DIR="$CONFIG_DIR/homes"
 
 fail() {
   jq -cn --arg error "$1" '{ok: false, error: $error}'
@@ -26,10 +26,60 @@ provider_store() {
   esac
 }
 
+provider_source_home() {
+  case $1 in
+    codex) printf '%s\n' "${OMARCHY_AI_SOURCE_CODEX_HOME:-${CODEX_HOME:-$HOME/.codex}}" ;;
+    claude) printf '%s\n' "${OMARCHY_AI_SOURCE_CLAUDE_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}" ;;
+    *) fail "Unknown provider: $1" ;;
+  esac
+}
+
+validate_account_id() {
+  [[ $1 =~ ^[A-Za-z0-9_-]+$ ]] || fail "Invalid account id"
+}
+
+account_home() {
+  local provider=$1 account_id=$2
+  validate_account_id "$account_id"
+  printf '%s/%s/%s\n' "$HOMES_DIR" "$provider" "$account_id"
+}
+
+ensure_private_directory() {
+  local path=$1
+  if [[ -L $path || ( -e $path && ! -d $path ) ]]; then
+    fail "Refusing unsafe account home: $path"
+  fi
+  mkdir -p -- "$path"
+  chmod 700 -- "$path"
+}
+
+link_shared_config() {
+  local provider=$1 home=$2 source entry target
+  source=$(provider_source_home "$provider")
+  case $provider in
+    codex)
+      for entry in AGENTS.md agents config.toml hooks.json memories plugins rules skills; do
+        target="$home/$entry"
+        if [[ ( -e $source/$entry || -L $source/$entry ) && ! -e $target && ! -L $target ]]; then
+          ln -s -- "$source/$entry" "$target"
+        fi
+      done
+      ;;
+    claude)
+      for entry in CLAUDE.md hooks plugins settings.json skills themes; do
+        target="$home/$entry"
+        if [[ ( -e $source/$entry || -L $source/$entry ) && ! -e $target && ! -L $target ]]; then
+          ln -s -- "$source/$entry" "$target"
+        fi
+      done
+      ;;
+  esac
+}
+
 load_store() {
   local path=$1
   if [[ ! -e $path ]]; then
-    STORE_JSON='{"version":1,"accounts":[],"active_account_id":null}'
+    STORE_JSON='{"version":2,"accounts":[],"active_account_id":null}'
     return
   fi
   if [[ -L $path ]]; then fail "Refusing to read symlink: $path"; fi
@@ -37,7 +87,7 @@ load_store() {
     if type != "object" or (.accounts | type) != "array" then
       error("invalid account store")
     else
-      .version //= 1 | .active_account_id //= null
+      .version = 2 | .active_account_id //= null
     end
   ' "$path" 2>/dev/null); then
     fail "Could not read $(basename "$path")"
@@ -45,6 +95,9 @@ load_store() {
 }
 
 lock_store() {
+  if [[ -L $CONFIG_DIR || ( -e $CONFIG_DIR && ! -d $CONFIG_DIR ) ]]; then
+    fail "Refusing unsafe config directory: $CONFIG_DIR"
+  fi
   mkdir -p -- "$CONFIG_DIR"
   chmod 700 -- "$CONFIG_DIR"
   exec 9>"$CONFIG_DIR/.lock"
@@ -82,10 +135,6 @@ atomic_preserving_write() {
   fi
   mv -fT -- "$temporary" "$path"
   chmod "$mode" -- "$path"
-}
-
-sha256_text() {
-  sha256sum | cut -d' ' -f1
 }
 
 jwt_claims() {
@@ -324,7 +373,8 @@ provider_status() {
     index=$(provider_match_index "$provider" "$current")
     if (( index >= 0 )); then current_id=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].id'); fi
   fi
-  active_id=${current_id:-$(printf '%s' "$STORE_JSON" | jq -r '.active_account_id // empty')}
+  active_id=$(printf '%s' "$STORE_JSON" | jq -r '.active_account_id // empty')
+  if [[ -z $active_id ]]; then active_id=$current_id; fi
   count=$(running_count "$provider")
   if [[ $current == null ]]; then has_current=false; suggested=''; else has_current=true; suggested=$(printf '%s' "$current" | jq -r '.name // empty'); fi
 
@@ -339,7 +389,7 @@ provider_status() {
         }],
         active_account_id: (if $active == "" then null else $active end),
         current_saved: ($current != ""), has_current_login: $has_current,
-        suggested_name: $suggested, can_switch: ($count == 0), running_count: $count
+        suggested_name: $suggested, can_switch: true, running_count: $count
       }'
   else
     printf '%s' "$STORE_JSON" | jq -c \
@@ -352,7 +402,7 @@ provider_status() {
         }],
         active_account_id: (if $active == "" then null else $active end),
         current_saved: ($current != ""), has_current_login: $has_current,
-        suggested_name: $suggested, can_switch: ($count == 0), running_count: $count
+        suggested_name: $suggested, can_switch: true, running_count: $count
       }'
   fi
 }
@@ -401,57 +451,15 @@ import_current() {
     STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$previous_active" \
       '.active_account_id=(if $id == "" then null else $id end)')
   fi
+  materialize_account_home "$provider" "$candidate" true >/dev/null
   atomic_private_write "$store_path" "$STORE_JSON"
   jq -cn --arg message "Saved $saved_name" '{ok: true, message: $message}'
 }
 
-account_identity() {
-  local provider=$1 account token
-  account=$(cat)
-  if [[ $provider == codex ]]; then
-    if [[ $(printf '%s' "$account" | jq -r '.auth_mode') == api_key ]]; then
-      printf 'key:%s\n' "$(printf '%s' "$account" | jq -r '.auth_data.key' | sha256_text)"
-    elif [[ -n $(printf '%s' "$account" | jq -r '.auth_data.account_id // empty') ]]; then
-      printf 'account:%s\n' "$(printf '%s' "$account" | jq -r '.auth_data.account_id')"
-    elif [[ -n $(printf '%s' "$account" | jq -r '.email // empty') ]]; then
-      printf 'email:%s\n' "$(printf '%s' "$account" | jq -r '.email | ascii_downcase')"
-    else
-      printf 'token:%s\n' "$(printf '%s' "$account" | jq -r '.auth_data.refresh_token' | sha256_text)"
-    fi
-  else
-    if [[ -n $(printf '%s' "$account" | jq -r '.oauth_account.accountUuid // empty') ]]; then
-      printf 'uuid:%s\n' "$(printf '%s' "$account" | jq -r '.oauth_account.accountUuid')"
-    elif [[ -n $(printf '%s' "$account" | jq -r '.email // empty') ]]; then
-      printf 'email:%s\n' "$(printf '%s' "$account" | jq -r '.email | ascii_downcase')"
-    else
-      token=$(printf '%s' "$account" | jq -r '.credentials.refreshToken')
-      printf 'token:%s\n' "$(printf '%s' "$token" | sha256_text)"
-    fi
-  fi
-}
-
-sync_current_into_store() {
-  local provider=$1 current index existing_id existing_name existing_created existing_last
-  current=$(provider_current_account "$provider" false)
-  [[ $current != null ]] || return
-  index=$(provider_match_index "$provider" "$current")
-  (( index >= 0 )) || return
-  existing_id=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].id')
-  existing_name=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].name')
-  existing_created=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].created_at')
-  existing_last=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].last_used_at // null')
-  current=$(printf '%s' "$current" | jq -c \
-    --arg id "$existing_id" --arg name "$existing_name" --arg created "$existing_created" \
-    --argjson last "$existing_last" '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last')
-  STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" \
-    --slurpfile current <(printf '%s\n' "$current") \
-    --arg id "$existing_id" '.accounts[$index]=$current[0] | .active_account_id=$id')
-}
-
 write_codex_account() {
-  local account auth path
+  local destination=${1:-} account auth path
   account=$(cat)
-  path=$(codex_auth_path)
+  path=${destination:-$(codex_auth_path)}
   if [[ $(printf '%s' "$account" | jq -r '.auth_mode') == api_key ]]; then
     auth=$(printf '%s' "$account" | jq -c '{auth_mode:"api_key",OPENAI_API_KEY:.auth_data.key}')
   else
@@ -469,10 +477,15 @@ write_codex_account() {
 }
 
 write_claude_account() {
-  local account credentials_path state_path credentials_document state oauth_type
+  local destination_home=${1:-} account credentials_path state_path credentials_document state oauth_type
   account=$(cat)
-  credentials_path=$(claude_credentials_path)
-  state_path=$(claude_state_path)
+  if [[ -n $destination_home ]]; then
+    credentials_path="$destination_home/.credentials.json"
+    state_path="$destination_home/.claude.json"
+  else
+    credentials_path=$(claude_credentials_path)
+    state_path=$(claude_state_path)
+  fi
   if [[ -f $credentials_path && ! -L $credentials_path ]]; then
     credentials_document=$(jq -c 'if type == "object" then . else {} end' "$credentials_path" 2>/dev/null || printf '{}')
   else
@@ -494,32 +507,122 @@ write_claude_account() {
   atomic_preserving_write "$state_path" "$state"
 }
 
+seed_claude_credentials() {
+  local home=$1 source credentials target
+  target="$home/.credentials.json"
+  [[ -e $target || -L $target ]] && return 0
+  source="$(provider_source_home claude)/.credentials.json"
+  [[ -f $source && ! -L $source ]] || return 0
+  credentials=$(jq -c 'if type == "object" then . else {} end' "$source" 2>/dev/null || printf '{}')
+  atomic_private_write "$target" "$credentials"
+}
+
+seed_claude_state() {
+  local home=$1 source state target
+  target="$home/.claude.json"
+  [[ -e $target || -L $target ]] && return 0
+  if [[ -n ${OMARCHY_AI_SOURCE_CLAUDE_STATE:-} ]]; then
+    source="$OMARCHY_AI_SOURCE_CLAUDE_STATE"
+  elif [[ -n ${OMARCHY_AI_SOURCE_CLAUDE_CONFIG_DIR:-} ]]; then
+    source="$OMARCHY_AI_SOURCE_CLAUDE_CONFIG_DIR/.claude.json"
+  elif [[ -n ${CLAUDE_CONFIG_DIR:-} ]]; then
+    source="$CLAUDE_CONFIG_DIR/.claude.json"
+  else
+    source="$HOME/.claude.json"
+  fi
+  [[ -f $source && ! -L $source ]] || return 0
+  state=$(jq -c 'if type == "object" then . else {} end' "$source" 2>/dev/null || printf '{}')
+  atomic_private_write "$target" "$state"
+}
+
+materialize_account_home() {
+  local provider=$1 account=$2 force=${3:-false} id home credential had_credential=false
+  id=$(printf '%s' "$account" | jq -r '.id')
+  home=$(account_home "$provider" "$id")
+  ensure_private_directory "$CONFIG_DIR"
+  ensure_private_directory "$HOMES_DIR"
+  ensure_private_directory "$HOMES_DIR/$provider"
+  ensure_private_directory "$home"
+  link_shared_config "$provider" "$home"
+
+  if [[ $provider == codex ]]; then
+    credential="$home/auth.json"
+    if [[ $force == true || ! -e $credential ]]; then
+      [[ ! -L $credential ]] || fail "Refusing to replace symlink: $credential"
+      printf '%s' "$account" | write_codex_account "$credential"
+    fi
+  else
+    credential="$home/.credentials.json"
+    if [[ -e $credential ]]; then had_credential=true; fi
+    seed_claude_credentials "$home"
+    seed_claude_state "$home"
+    if [[ $force == true || $had_credential == false ]]; then
+      [[ ! -L $credential ]] || fail "Refusing to replace symlink: $credential"
+      printf '%s' "$account" | write_claude_account "$home"
+    fi
+  fi
+  printf '%s\n' "$home"
+}
+
+sync_account_home_into_store() {
+  local provider=$1 account_id=$2 home current index existing_name existing_created existing_last
+  home=$(account_home "$provider" "$account_id")
+  if [[ $provider == codex ]]; then
+    [[ -f $home/auth.json && ! -L $home/auth.json ]] || return
+    current=$(CODEX_HOME="$home" codex_current_account)
+  else
+    [[ -f $home/.credentials.json && ! -L $home/.credentials.json ]] || return
+    current=$(CLAUDE_CONFIG_DIR="$home" claude_current_account false)
+  fi
+  [[ $current != null ]] || return
+  index=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" \
+    '[.accounts | to_entries[] | select(.value.id == $id)] | first | (.key // -1)')
+  (( index >= 0 )) || return
+  existing_name=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].name')
+  existing_created=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].created_at')
+  existing_last=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].last_used_at // null')
+  current=$(printf '%s' "$current" | jq -c \
+    --arg id "$account_id" --arg name "$existing_name" --arg created "$existing_created" \
+    --argjson last "$existing_last" '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last')
+  STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" \
+    --slurpfile current <(printf '%s\n' "$current") '.accounts[$index]=$current[0]')
+}
+
 switch_account() {
-  local provider=$1 account_id=$2 store_path target current target_identity current_identity count now name
+  local provider=$1 account_id=$2 store_path target now name
   store_path=$(provider_store "$provider")
   lock_store
   load_store "$store_path"
   target=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" '.accounts[] | select(.id == $id)' | head -n 1)
   [[ -n $target ]] || fail "Account not found"
-  sync_current_into_store "$provider"
-  target=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" '.accounts[] | select(.id == $id)' | head -n 1)
-  current=$(provider_current_account "$provider" false)
-  target_identity=$(printf '%s' "$target" | account_identity "$provider")
-  if [[ $current == null ]]; then current_identity=''; else current_identity=$(printf '%s' "$current" | account_identity "$provider"); fi
-  if [[ $target_identity != "$current_identity" ]]; then
-    count=$(running_count "$provider")
-    if (( count > 0 )); then
-      atomic_private_write "$store_path" "$STORE_JSON"
-      fail "Close $count active ${provider^} session$([[ $count == 1 ]] || printf s) before switching"
-    fi
-    if [[ $provider == codex ]]; then printf '%s' "$target" | write_codex_account; else printf '%s' "$target" | write_claude_account; fi
-  fi
+  materialize_account_home "$provider" "$target" false >/dev/null
+  sync_account_home_into_store "$provider" "$account_id"
   now=$(utc_now)
   STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" --arg now "$now" '
     .active_account_id=$id | .accounts |= map(if .id == $id then .last_used_at=$now else . end)')
   atomic_private_write "$store_path" "$STORE_JSON"
   name=$(printf '%s' "$target" | jq -r '.name')
-  jq -cn --arg message "Switched to $name" '{ok: true, message: $message}'
+  jq -cn --arg message "Selected $name for new sessions" '{ok: true, message: $message}'
+}
+
+prepare_launch() {
+  local provider=$1 account_id=${2:-} store_path target home now name
+  store_path=$(provider_store "$provider")
+  lock_store
+  load_store "$store_path"
+  if [[ -z $account_id ]]; then account_id=$(printf '%s' "$STORE_JSON" | jq -r '.active_account_id // empty'); fi
+  [[ -n $account_id ]] || fail "Select a saved ${provider^} account first"
+  target=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" '.accounts[] | select(.id == $id)' | head -n 1)
+  [[ -n $target ]] || fail "Account not found"
+  home=$(materialize_account_home "$provider" "$target" false)
+  sync_account_home_into_store "$provider" "$account_id"
+  now=$(utc_now)
+  STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" --arg now "$now" '
+    .active_account_id=$id | .accounts |= map(if .id == $id then .last_used_at=$now else . end)')
+  atomic_private_write "$store_path" "$STORE_JSON"
+  name=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" '.accounts[] | select(.id == $id) | .name')
+  jq -cn --arg provider "$provider" --arg id "$account_id" --arg name "$name" --arg home "$home" \
+    '{ok: true, provider: $provider, account_id: $id, name: $name, home: $home}'
 }
 
 rename_account() {
@@ -537,7 +640,7 @@ rename_account() {
 }
 
 remove_account() {
-  local provider=$1 account_id=$2 store_path before after
+  local provider=$1 account_id=$2 store_path before after home
   store_path=$(provider_store "$provider")
   lock_store
   load_store "$store_path"
@@ -548,11 +651,13 @@ remove_account() {
   after=$(printf '%s' "$STORE_JSON" | jq '.accounts | length')
   (( after < before )) || fail "Account not found"
   atomic_private_write "$store_path" "$STORE_JSON"
+  home=$(account_home "$provider" "$account_id")
+  if [[ -d $home && ! -L $home ]]; then rm -rf -- "$home"; fi
   jq -cn '{ok: true, message: "Removed saved account"}'
 }
 
 usage() {
-  printf 'Usage: %s status | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
+  printf 'Usage: %s status | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
   exit 2
 }
 
@@ -579,6 +684,11 @@ main() {
     switch)
       [[ $# == 3 ]] || usage
       switch_account "$2" "$3"
+      ;;
+    prepare-launch)
+      [[ $# == 2 || $# == 3 ]] || usage
+      [[ $2 == codex || $2 == claude ]] || fail "Unknown provider: $2"
+      prepare_launch "$2" "${3:-}"
       ;;
     rename)
       [[ $# == 4 ]] || usage

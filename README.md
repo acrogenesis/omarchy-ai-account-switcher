@@ -7,19 +7,19 @@ and Claude Code accounts.
 
 - Separate Codex and Claude account lists in one compact menubar panel.
 - Uses the official `codex login` and `claude auth login` flows.
-- Adds accounts in an isolated temporary config, so active sessions and the
-  current login are not disturbed.
-- Preserves credentials refreshed by the currently selected account before a
-  switch.
-- Preserves Claude's unrelated `mcpOAuth` data when changing Claude accounts.
-- Blocks only an actual provider account change while that provider has active
-  interactive sessions. Saving or adding an account remains available.
+- Gives every account a stable isolated `CODEX_HOME` or `CLAUDE_CONFIG_DIR`.
+- Opens the selected account in a new terminal without rewriting the shared
+  Codex or Claude login.
+- Lets existing sessions keep the account they started with while other
+  accounts run alongside them.
+- Retains credentials refreshed inside each account home and seeds Claude
+  homes with existing unrelated `mcpOAuth` data.
 - Keeps credential stores local with `0700` directory and `0600` file modes.
 
 ## Requirements
 
 - Omarchy Quattro with plugin support
-- `bash`, `jq`, `flock`, `base64`, and `sha256sum` (included in Omarchy's base system)
+- `bash`, `jq`, `flock`, and `base64` (included in Omarchy's base system)
 - `codex` for Codex accounts
 - `claude` for Claude accounts
 
@@ -30,14 +30,19 @@ omarchy plugin add https://github.com/acrogenesis/omarchy-ai-account-switcher.gi
 ```
 
 The plugin appears in the right side of the bar. Open it, select Codex or
-Claude, and save the login currently active on the machine. **Add another
-account** automatically refreshes that saved copy and immediately launches the
-provider's official login in a terminal using an isolated `CODEX_HOME` or
-`CLAUDE_CONFIG_DIR`; there is no pre-login confirmation prompt.
+Claude, and save the login currently active on the machine. Select any saved
+account and press **Open Codex/Claude as ...** to start a terminal using that
+account's isolated provider home. Selecting another account later does not
+change any already-open session.
 
-Adding an account does not require closing existing sessions. Close that
-provider's interactive sessions only when selecting a different saved account;
-new sessions then inherit the selected login.
+**Add another account** immediately launches the provider's official login in
+an isolated temporary home; there is no pre-login confirmation prompt. After
+login, the plugin promotes it to a stable private account home. No operation
+requires closing active Codex or Claude sessions.
+
+Running `codex` or `claude` directly in an unrelated terminal continues to use
+the provider's normal shared login. Use the panel's **Open** action when you
+want a saved switcher account.
 
 ## Local data
 
@@ -46,13 +51,17 @@ Saved credentials are kept outside the plugin checkout:
 ```text
 ~/.config/omarchy/ai-account-switcher/
 ├── codex-accounts.json
-└── claude-accounts.json
+├── claude-accounts.json
+└── homes/
+    ├── codex/ACCOUNT_ID/
+    └── claude/ACCOUNT_ID/
 ```
 
-For Claude, only `claudeAiOauth` is stored per account. Switching merges it into
-`~/.claude/.credentials.json` instead of replacing the document, retaining MCP
-OAuth credentials and other unrelated state. Claude account display metadata is
-restored in `~/.claude.json`.
+The homes contain each account's credentials, refreshed tokens, and session
+state. Common user configuration such as Codex skills/rules and Claude
+settings/plugins is linked from the normal provider home when an account home
+is first created. Claude homes begin with the shared credential document's
+unrelated MCP OAuth entries, then refresh independently.
 
 Removing the plugin does not delete saved credentials. Delete the directory
 above separately if you also want to remove the saved account copies.
@@ -75,11 +84,12 @@ configuration.
 
 ## Security model
 
-This plugin necessarily reads and writes local Codex and Claude authentication
-files when the user explicitly saves or switches an account. Saved credential
-copies never leave the machine, are excluded from command and QML output, and
-are written under a private `0700` directory with `0600` files. Account changes
-are locked and atomic, and destination symlinks are rejected.
+This plugin reads the normal Codex or Claude authentication file only when the
+user explicitly saves that login. Selecting or opening a saved account does not
+rewrite those shared files. Saved credentials never leave the machine, are
+excluded from command and QML output, and are written under private `0700`
+directories with `0600` files. Account changes are locked and atomic, and
+destination symlinks are rejected.
 
 Review the source before installation. Omarchy plugins execute as unsandboxed
 user code; marketplace validation is compatibility checking, not a security
@@ -94,6 +104,7 @@ omarchy-shell acrogenesis.ai-account-switcher toggle
 omarchy-shell acrogenesis.ai-account-switcher selectProvider claude
 omarchy-shell acrogenesis.ai-account-switcher saveCurrent codex "Personal"
 omarchy-shell acrogenesis.ai-account-switcher switchAccount claude ACCOUNT_ID
+omarchy-shell acrogenesis.ai-account-switcher launchSelected claude
 ```
 
 Provider values are `codex` and `claude`.
@@ -104,11 +115,17 @@ Provider values are `codex` and `claude`.
 bash tests/test_accounts.sh
 bash tests/test_add_codex_account.sh
 bash tests/test_add_claude_account.sh
-bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh tests/*.sh
+bash tests/test_launch_account.sh
+bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh tests/*.sh
 omarchy plugin validate .
 ```
 
 ## Design references
+
+The per-session isolation model uses the providers' documented configuration
+roots: OpenAI's [`CODEX_HOME`](https://learn.chatgpt.com/docs/config-file/environment-variables)
+and Anthropic's [`CLAUDE_CONFIG_DIR`](https://code.claude.com/docs/en/env-vars),
+which Anthropic explicitly supports for running multiple accounts side by side.
 
 The Codex flow was inspired by
 [Lampese/codex-switcher](https://github.com/Lampese/codex-switcher), while the

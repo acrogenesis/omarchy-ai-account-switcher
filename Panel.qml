@@ -200,18 +200,6 @@ Panel {
             }
           }
 
-          Text {
-            visible: root.service && !root.service.canSwitch && root.service.accounts.length > 1
-            width: parent.width
-            text: !root.service ? ""
-              : "Close active " + root.service.providerLabel
-                + " sessions before changing accounts. Existing sessions keep their current login."
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
           PanelSeparator { width: parent.width; foreground: root.foreground }
 
           PanelSectionHeader {
@@ -254,6 +242,32 @@ Panel {
 
           Button {
             width: parent.width
+            text: root.service && root.service.activeAccountId !== ""
+              ? "Open " + root.service.providerLabel + " as " + root.service.activeName
+              : "Select a saved account to open " + (root.service ? root.service.providerLabel : "AI")
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            focusable: true
+            enabled: root.service && root.service.activeAccountId !== ""
+              && !root.service.busy && !root.service.launching
+            onClicked: {
+              root.close()
+              root.service.launchSelectedAccount()
+            }
+          }
+
+          Text {
+            width: parent.width
+            text: "Each launched session keeps this account, even after you select another one."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            width: parent.width
             text: "Add another " + (root.service ? root.service.providerLabel : "AI") + " account"
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -278,8 +292,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "New " + (root.service ? root.service.providerLabel : "AI")
-              + " sessions use the selected login. Middle-click the bar icon to refresh."
+            text: "Sessions opened from this panel use the selected login. Middle-click the bar icon to refresh."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -295,7 +308,7 @@ Panel {
     id: accountRow
     property var account: null
     property int rowIndex: 0
-    readonly property bool currentAccount: account && account.is_current === true
+    readonly property bool currentAccount: account && account.is_active === true
     readonly property bool switching: account && root.service
       && root.service.switchingId === String(account.id || "")
 
@@ -347,7 +360,7 @@ Panel {
             if (accountRow.account.subscription_type)
               pieces.push(String(accountRow.account.subscription_type).toUpperCase())
             if (accountRow.account.org_name) pieces.push(String(accountRow.account.org_name))
-            if (accountRow.currentAccount) pieces.push("ACTIVE")
+            if (accountRow.currentAccount) pieces.push("SELECTED")
             return pieces.join(" · ")
           }
           color: root.dim
