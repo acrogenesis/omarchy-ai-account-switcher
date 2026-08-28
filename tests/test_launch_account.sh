@@ -67,12 +67,19 @@ router_env=(
   HOME="$test_dir"
   OMARCHY_AI_SWITCHER_DIR="$switcher_dir"
   OMARCHY_AI_SWITCHER_BIN_DIR="$wrapper_bin"
+  OMARCHY_AI_SWITCHER_MISE_CONF_DIR="$test_dir/mise/conf.d"
   OMARCHY_AI_SWITCHER_PLUGIN_DIR="$project_dir"
   FAKE_CODEX_LOG="$test_dir/codex.log"
   FAKE_CLAUDE_LOG="$test_dir/claude.log"
 )
 
+mise_fragment="$test_dir/mise/conf.d/omarchy-ai-account-switcher.toml"
+mkdir -p "$(dirname "$mise_fragment")"
+printf '# existing config\n[shell_alias]\nll = "ls -la"\n' >"$mise_fragment"
 env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" install >/dev/null
+rg -q '^\[shell_alias\]$' "$mise_fragment"
+rg -Fq "claude = \"$wrapper_bin/claude\"" "$mise_fragment"
+rg -q '^# existing config$' "$switcher_dir/wrapper-backups/mise-conf-fragment.toml"
 env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
   jq -e '.command_wrappers_enabled == true' >/dev/null
 
@@ -92,6 +99,8 @@ jq -e --arg home "$live_claude" 'select(.launched == true and .home == $home)' \
 
 env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" remove >/dev/null
 [[ ! -e $wrapper_bin/codex ]]
+rg -q '^# existing config$' "$mise_fragment"
+rg -q '^ll = "ls -la"$' "$mise_fragment"
 rg -q 'original-claude' "$wrapper_bin/claude"
 
 # A stale backup must never cause a subsequently changed command to be lost.

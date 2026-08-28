@@ -17,7 +17,8 @@ This repository is the Omarchy Quattro plugin
   `CLAUDE_CONFIG_DIR`, so running sessions retain the login they started with.
 - Installed command routers must honor an already-set provider home, resolve
   the real CLI without recursion, and preserve any replaced command as a
-  recoverable private backup.
+  recoverable private backup. Their mise alias fragment must also be private,
+  reversible, and take precedence over mise-managed provider binaries.
 - Retain refreshed tokens from each stable account home and seed Claude homes
   with existing unrelated `mcpOAuth` data without modifying the shared file.
 - Credential directories and files must remain `0700` and `0600` respectively,

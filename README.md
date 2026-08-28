@@ -43,10 +43,12 @@ login, the plugin promotes it to a stable private account home. No operation
 requires closing active Codex or Claude sessions.
 
 Press **Make plain codex and claude commands follow selection** once to install
-recoverable command routers in `~/.local/bin`. After that, ordinary new
-`codex` and `claude` processes use the menubar selection from any terminal.
-Processes already running—and new conversations created inside one of those
-existing processes—keep the account that process started with.
+recoverable command routers in `~/.local/bin` plus a private mise shell-alias
+fragment that keeps those routers ahead of mise-managed provider binaries.
+After that, ordinary new `codex` and `claude` processes use the menubar
+selection from any terminal. Processes already running—and new conversations
+created inside one of those existing processes—keep the account that process
+started with.
 
 ## Local data
 
@@ -62,7 +64,8 @@ Saved credentials are kept outside the plugin checkout:
 ```
 
 If terminal command routing is enabled, an existing command at the destination
-is preserved under `wrapper-backups/` before the switcher installs its router.
+or mise fragment is preserved under `wrapper-backups/` before the switcher
+installs its router and `~/.config/mise/conf.d/omarchy-ai-account-switcher.toml`.
 
 The homes contain each account's credentials, refreshed tokens, and session
 state. Common user configuration such as Codex skills/rules and Claude
@@ -106,7 +109,8 @@ rewrite those shared files. Saved credentials never leave the machine, are
 excluded from command and QML output, and are written under private `0700`
 directories with `0600` files. Account changes are locked and atomic, and
 destination symlinks are rejected. Terminal routing is installed only through
-the explicit panel action; replaced commands are backed up and restorable.
+the explicit panel action; replaced commands and mise configuration are backed
+up and restorable.
 
 Review the source before installation. Omarchy plugins execute as unsandboxed
 user code; marketplace validation is compatibility checking, not a security

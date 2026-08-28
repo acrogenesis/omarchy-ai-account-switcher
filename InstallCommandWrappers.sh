@@ -8,6 +8,10 @@ config_dir="${OMARCHY_AI_SWITCHER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy
 bin_dir="${OMARCHY_AI_SWITCHER_BIN_DIR:-$HOME/.local/bin}"
 backup_dir="$config_dir/wrapper-backups"
 marker='omarchy-ai-account-switcher command router v1'
+mise_marker='omarchy-ai-account-switcher mise aliases v1'
+mise_conf_dir="${OMARCHY_AI_SWITCHER_MISE_CONF_DIR:-${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}/conf.d}"
+mise_fragment="$mise_conf_dir/omarchy-ai-account-switcher.toml"
+mise_backup="$backup_dir/mise-conf-fragment.toml"
 
 fail() {
   jq -cn --arg error "$1" '{ok: false, error: $error}'
@@ -16,6 +20,10 @@ fail() {
 
 is_our_wrapper() {
   [[ -f $1 && ! -L $1 ]] && grep -Fq "$marker" "$1" 2>/dev/null
+}
+
+is_our_mise_fragment() {
+  [[ -f $1 && ! -L $1 ]] && grep -Fq "$mise_marker" "$1" 2>/dev/null
 }
 
 ensure_directory() {
@@ -49,6 +57,45 @@ preflight_install() {
   fi
 }
 
+preflight_mise_fragment() {
+  [[ ! -d $mise_fragment ]] || fail "Refusing to replace directory: $mise_fragment"
+  if [[ ( -e $mise_fragment || -L $mise_fragment ) ]] && ! is_our_mise_fragment "$mise_fragment" &&
+    [[ -e $mise_backup || -L $mise_backup ]]; then
+    fail "Refusing to overwrite a changed mise configuration while its previous backup exists: $mise_fragment"
+  fi
+}
+
+install_mise_fragment() {
+  local temporary codex_command claude_command
+  if [[ ( -e $mise_fragment || -L $mise_fragment ) ]] && ! is_our_mise_fragment "$mise_fragment" &&
+    [[ ! -e $mise_backup && ! -L $mise_backup ]]; then
+    cp -a -- "$mise_fragment" "$mise_backup"
+  fi
+  printf -v codex_command '%q' "$bin_dir/codex"
+  printf -v claude_command '%q' "$bin_dir/claude"
+  temporary=$(mktemp "$mise_conf_dir/.omarchy-ai-account-switcher.XXXXXX")
+  {
+    printf '# %s\n' "$mise_marker"
+    printf '[shell_alias]\n'
+    printf 'codex = %s\n' "$(jq -cn --arg value "$codex_command" '$value')"
+    printf 'claude = %s\n' "$(jq -cn --arg value "$claude_command" '$value')"
+  } >"$temporary"
+  chmod 600 -- "$temporary"
+  mv -fT -- "$temporary" "$mise_fragment"
+}
+
+remove_mise_fragment() {
+  if [[ -e $mise_backup || -L $mise_backup ]]; then
+    if [[ -e $mise_fragment || -L $mise_fragment ]]; then
+      is_our_mise_fragment "$mise_fragment" || fail "Refusing to replace changed mise configuration: $mise_fragment"
+      rm -f -- "$mise_fragment"
+    fi
+    mv -T -- "$mise_backup" "$mise_fragment"
+  elif is_our_mise_fragment "$mise_fragment"; then
+    rm -f -- "$mise_fragment"
+  fi
+}
+
 remove_wrapper() {
   local provider=$1 target backup
   target="$bin_dir/$provider"
@@ -68,16 +115,20 @@ remove_wrapper() {
 ensure_directory "$config_dir" 700
 ensure_directory "$backup_dir" 700
 ensure_directory "$bin_dir" 755
+ensure_directory "$mise_conf_dir" 700
 
 case ${1:-install} in
   install)
     preflight_install codex
     preflight_install claude
+    preflight_mise_fragment
     install_wrapper codex
     install_wrapper claude
+    install_mise_fragment
     jq -cn '{ok: true, message: "Terminal commands now follow the selected accounts"}'
     ;;
   remove)
+    remove_mise_fragment
     remove_wrapper codex
     remove_wrapper claude
     jq -cn '{ok: true, message: "Restored the previous terminal commands"}'

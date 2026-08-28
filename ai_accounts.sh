@@ -410,12 +410,17 @@ provider_status() {
 combined_status() {
   local codex claude wrappers=false marker='omarchy-ai-account-switcher command router v1'
   local wrapper_bin="${OMARCHY_AI_SWITCHER_BIN_DIR:-$HOME/.local/bin}"
+  local mise_marker='omarchy-ai-account-switcher mise aliases v1'
+  local mise_conf_dir="${OMARCHY_AI_SWITCHER_MISE_CONF_DIR:-${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}/conf.d}"
+  local mise_fragment="$mise_conf_dir/omarchy-ai-account-switcher.toml"
   codex=$(provider_status codex)
   claude=$(provider_status claude)
   if [[ -f $wrapper_bin/codex && ! -L $wrapper_bin/codex &&
     -f $wrapper_bin/claude && ! -L $wrapper_bin/claude ]] &&
     grep -Fq "$marker" "$wrapper_bin/codex" 2>/dev/null &&
-    grep -Fq "$marker" "$wrapper_bin/claude" 2>/dev/null; then
+    grep -Fq "$marker" "$wrapper_bin/claude" 2>/dev/null &&
+    [[ -f $mise_fragment && ! -L $mise_fragment ]] &&
+    grep -Fq "$mise_marker" "$mise_fragment" 2>/dev/null; then
     wrappers=true
   fi
   jq -cn --slurpfile codex <(printf '%s\n' "$codex") --slurpfile claude <(printf '%s\n' "$claude") \
