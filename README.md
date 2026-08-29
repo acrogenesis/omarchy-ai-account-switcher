@@ -3,6 +3,8 @@
 A native Omarchy Quattro bar plugin for saving and switching personal Codex CLI
 and Claude Code accounts.
 
+![AI Account Switcher panel showing two fictional Claude accounts](preview.png)
+
 ## Features
 
 - Separate Codex and Claude account lists in one compact menubar panel.
