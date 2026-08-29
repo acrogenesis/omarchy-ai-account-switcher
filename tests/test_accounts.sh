@@ -206,4 +206,59 @@ check jq -e --arg id "$first_claude" '[.accounts[] | select(.id == $id)] | lengt
   "$switcher_dir/claude-accounts.json" >/dev/null
 check test ! -e "$first_claude_home"
 
+# The account matching Claude's original shared profile adopts that profile's
+# resumable history. Other accounts keep independent histories.
+reset_fixture claude-shared-history
+unset CLAUDE_CONFIG_DIR
+shared_claude_home="$HOME/.claude"
+mkdir -p "$shared_claude_home/projects/-shared-project"
+jq -n '{claudeAiOauth:{
+  accessToken:"shared-access",refreshToken:"shared-refresh",subscriptionType:"team"
+},mcpOAuth:{example:{accessToken:"mcp-token"}}}' >"$shared_claude_home/.credentials.json"
+jq -n '{oauthAccount:{
+  emailAddress:"valiot@example.com",accountUuid:"uuid-valiot",organizationName:"Valiot"
+},projects:{"/shared/project":{}}}' >"$HOME/.claude.json"
+jq -cn '{display:"original",pastedContents:{},project:"/shared/project",
+  sessionId:"session-original",timestamp:1}' >"$shared_claude_home/history.jsonl"
+printf '{"type":"summary","sessionId":"session-original"}\n' \
+  >"$shared_claude_home/projects/-shared-project/session-original.jsonl"
+
+helper import-current claude Valiot >/dev/null
+valiot_id=$(jq -r '.accounts[0].id' "$switcher_dir/claude-accounts.json")
+valiot_home="$switcher_dir/homes/claude/$valiot_id"
+check test -L "$valiot_home/history.jsonl"
+check test "$(readlink -f "$valiot_home/history.jsonl")" = "$shared_claude_home/history.jsonl"
+check test -L "$valiot_home/projects"
+check test "$(readlink -f "$valiot_home/projects")" = "$shared_claude_home/projects"
+
+# Simulate history written by a pre-fix isolated home, then verify migration
+# merges it into the shared Valiot profile and retains a private backup.
+rm -- "$valiot_home/history.jsonl" "$valiot_home/projects"
+mkdir -p "$valiot_home/projects/-isolated-project"
+jq -cn '{display:"isolated",pastedContents:{},project:"/isolated/project",
+  sessionId:"session-isolated",timestamp:2}' >"$valiot_home/history.jsonl"
+jq -cn '{display:"original",pastedContents:{},project:"/shared/project",
+  sessionId:"session-original",timestamp:1}' >>"$valiot_home/history.jsonl"
+printf '{"type":"summary","sessionId":"session-isolated"}\n' \
+  >"$valiot_home/projects/-isolated-project/session-isolated.jsonl"
+helper prepare-launch claude "$valiot_id" >/dev/null
+check test "$(jq -s 'length' "$shared_claude_home/history.jsonl")" = 2
+check test -f "$shared_claude_home/projects/-shared-project/session-original.jsonl"
+check test -f "$shared_claude_home/projects/-isolated-project/session-isolated.jsonl"
+check test -n "$(find "$switcher_dir/history-backups/claude/$valiot_id" -type f -name history.jsonl -print -quit)"
+backup_count=$(find "$switcher_dir/history-backups/claude/$valiot_id" -type f | wc -l)
+helper prepare-launch claude "$valiot_id" >/dev/null
+check test "$(jq -s 'length' "$shared_claude_home/history.jsonl")" = 2
+check test "$(find "$switcher_dir/history-backups/claude/$valiot_id" -type f | wc -l)" = "$backup_count"
+
+other_claude_home="$fixture/other-claude"
+mkdir -p "$other_claude_home"
+claude_home="$other_claude_home"
+write_claude omarchy@example.com uuid-omarchy omarchy 'Omacom'
+CLAUDE_CONFIG_DIR="$other_claude_home" helper import-current claude Omarchy --inactive >/dev/null
+omarchy_id=$(jq -r '.accounts[] | select(.name == "Omarchy").id' "$switcher_dir/claude-accounts.json")
+omarchy_home="$switcher_dir/homes/claude/$omarchy_id"
+check test ! -L "$omarchy_home/history.jsonl"
+check test ! -L "$omarchy_home/projects"
+
 printf 'Account helper tests passed (%d checks)\n' "$checks"

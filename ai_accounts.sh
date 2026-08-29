@@ -548,6 +548,106 @@ seed_claude_state() {
   atomic_private_write "$target" "$state"
 }
 
+shared_claude_history_home() {
+  printf '%s\n' "${OMARCHY_AI_SHARED_CLAUDE_HOME:-$HOME/.claude}"
+}
+
+shared_claude_state_path() {
+  printf '%s\n' "${OMARCHY_AI_SHARED_CLAUDE_STATE:-$HOME/.claude.json}"
+}
+
+claude_account_owns_shared_history() {
+  local account=$1 state_path state account_uuid shared_uuid account_email shared_email
+  state_path=$(shared_claude_state_path)
+  [[ -f $state_path && ! -L $state_path ]] || return 1
+  state=$(jq -c 'if type == "object" then . else {} end' "$state_path" 2>/dev/null || printf '{}')
+  account_uuid=$(printf '%s' "$account" | jq -r '.oauth_account.accountUuid // empty')
+  shared_uuid=$(printf '%s' "$state" | jq -r '.oauthAccount.accountUuid // empty')
+  if [[ -n $account_uuid && -n $shared_uuid ]]; then [[ $account_uuid == "$shared_uuid" ]]; return; fi
+  account_email=$(printf '%s' "$account" | jq -r '.email // empty' | tr '[:upper:]' '[:lower:]')
+  shared_email=$(printf '%s' "$state" | jq -r '.oauthAccount.emailAddress // empty' | tr '[:upper:]' '[:lower:]')
+  [[ -n $account_email && -n $shared_email && $account_email == "$shared_email" ]]
+}
+
+ensure_shared_history_target() {
+  local target=$1 kind=$2
+  [[ ! -L $target ]] || fail "Refusing unsafe shared Claude history path: $target"
+  case $kind in
+    file)
+      if [[ -e $target && ! -f $target ]]; then fail "Refusing unsafe shared Claude history file: $target"; fi
+      if [[ ! -e $target ]]; then
+        mkdir -p -- "$(dirname -- "$target")"
+        : >"$target"
+        chmod 600 -- "$target"
+      fi
+      ;;
+    directory)
+      ensure_private_directory "$target"
+      ;;
+  esac
+}
+
+merge_claude_history_file() {
+  local source=$1 destination=$2 missing
+  [[ -f $source && ! -L $source ]] || return 0
+  if ! missing=$(jq -c --slurpfile existing "$destination" '
+    . as $entry |
+    select(any($existing[];
+      .sessionId == $entry.sessionId and
+      .timestamp == $entry.timestamp and
+      .display == $entry.display) | not)
+  ' "$source" 2>/dev/null); then
+    fail "Could not merge saved Claude prompt history"
+  fi
+  if [[ -n $missing ]]; then printf '%s\n' "$missing" >>"$destination"; fi
+  chmod 600 -- "$destination"
+}
+
+link_shared_claude_history() {
+  local account=$1 home=$2 id shared_home backup_root timestamp source target resolved
+  claude_account_owns_shared_history "$account" || return 0
+  id=$(printf '%s' "$account" | jq -r '.id')
+  shared_home=$(shared_claude_history_home)
+  [[ $home != "$shared_home" ]] || return 0
+  ensure_private_directory "$shared_home"
+  timestamp=$(date -u +'%Y%m%dT%H%M%S.%NZ')
+  backup_root="$CONFIG_DIR/history-backups/claude/$id/$timestamp"
+
+  source="$home/history.jsonl"
+  target="$shared_home/history.jsonl"
+  if [[ -L $source ]]; then
+    resolved=$(readlink -f -- "$source" 2>/dev/null || true)
+    [[ $resolved == "$(readlink -f -- "$target" 2>/dev/null || printf '%s' "$target")" ]] ||
+      fail "Refusing unexpected Claude history link: $source"
+  else
+    ensure_shared_history_target "$target" file
+    if [[ -e $source ]]; then
+      [[ -f $source ]] || fail "Refusing unsafe Claude history file: $source"
+      merge_claude_history_file "$source" "$target"
+      ensure_private_directory "$backup_root"
+      mv -- "$source" "$backup_root/history.jsonl"
+    fi
+    ln -s -- "$target" "$source"
+  fi
+
+  source="$home/projects"
+  target="$shared_home/projects"
+  if [[ -L $source ]]; then
+    resolved=$(readlink -f -- "$source" 2>/dev/null || true)
+    [[ $resolved == "$(readlink -f -- "$target" 2>/dev/null || printf '%s' "$target")" ]] ||
+      fail "Refusing unexpected Claude projects link: $source"
+  else
+    ensure_shared_history_target "$target" directory
+    if [[ -e $source ]]; then
+      [[ -d $source ]] || fail "Refusing unsafe Claude projects directory: $source"
+      cp -a -n -- "$source/." "$target/"
+      ensure_private_directory "$backup_root"
+      mv -- "$source" "$backup_root/projects"
+    fi
+    ln -s -- "$target" "$source"
+  fi
+}
+
 materialize_account_home() {
   local provider=$1 account=$2 force=${3:-false} id home credential had_credential=false
   id=$(printf '%s' "$account" | jq -r '.id')
@@ -569,6 +669,7 @@ materialize_account_home() {
     if [[ -e $credential ]]; then had_credential=true; fi
     seed_claude_credentials "$home"
     seed_claude_state "$home"
+    link_shared_claude_history "$account" "$home"
     if [[ $force == true || $had_credential == false ]]; then
       [[ ! -L $credential ]] || fail "Refusing to replace symlink: $credential"
       printf '%s' "$account" | write_claude_account "$home"

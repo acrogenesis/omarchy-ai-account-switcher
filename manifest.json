@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "acrogenesis.ai-account-switcher",
   "name": "AI Account Switcher",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "author": "acrogenesis",
   "license": "MIT",
   "description": "Open isolated Codex and Claude Code accounts from the Omarchy bar without closing active sessions.",

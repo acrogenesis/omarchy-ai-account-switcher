@@ -16,6 +16,8 @@ and Claude Code accounts.
   account, while honoring an explicitly set provider home.
 - Lets existing sessions keep the account they started with while other
   accounts run alongside them.
+- Keeps the original Claude profile's existing prompt and resume history with
+  that account, while new Claude accounts retain independent histories.
 - Retains credentials refreshed inside each account home and seeds Claude
   homes with existing unrelated `mcpOAuth` data.
 - Keeps credential stores local with `0700` directory and `0600` file modes.
@@ -74,6 +76,15 @@ state. Common user configuration such as Codex skills/rules and Claude
 settings/plugins is linked from the normal provider home when an account home
 is first created. Claude homes begin with the shared credential document's
 unrelated MCP OAuth entries, then refresh independently.
+
+For Claude, the saved account whose identity matches the original
+`~/.claude.json` profile continues to use the prompt history and project
+transcripts already stored in `~/.claude`. Other Claude accounts keep their
+own histories in their isolated homes. If an older plugin version already
+created isolated history for the original account, it is merged back without
+overwriting existing transcripts and retained under
+`history-backups/claude/ACCOUNT_ID/` before the account is linked to the
+original history.
 
 Removing the plugin does not delete saved credentials. Delete the directory
 above separately if you also want to remove the saved account copies.

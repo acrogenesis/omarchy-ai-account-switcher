@@ -21,6 +21,10 @@ This repository is the Omarchy Quattro plugin
   reversible, and take precedence over mise-managed provider binaries.
 - Retain refreshed tokens from each stable account home and seed Claude homes
   with existing unrelated `mcpOAuth` data without modifying the shared file.
+- The saved Claude account matching the original shared `~/.claude.json`
+  identity owns the existing `~/.claude` prompt and project history. Link only
+  that account to the shared history; keep every other account's history
+  isolated, and back up migrated files before replacing them with links.
 - Credential directories and files must remain `0700` and `0600` respectively,
   and writers must refuse destination symlinks.
 
