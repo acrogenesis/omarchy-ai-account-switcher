@@ -65,6 +65,8 @@ chmod 755 "$wrapper_bin/claude"
 router_env=(
   PATH="$wrapper_bin:$fake_bin:/usr/bin"
   HOME="$test_dir"
+  CODEX_HOME=
+  CLAUDE_CONFIG_DIR=
   OMARCHY_AI_SWITCHER_DIR="$switcher_dir"
   OMARCHY_AI_SWITCHER_BIN_DIR="$wrapper_bin"
   OMARCHY_AI_SWITCHER_MISE_CONF_DIR="$test_dir/mise/conf.d"

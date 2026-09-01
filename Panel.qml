@@ -100,6 +100,7 @@ Panel {
             fontFamily: root.fontFamily
             iconComponent: Component {
               Text {
+                textFormat: Text.PlainText
                 text: "󱚣"
                 color: root.foreground
                 font.family: root.fontFamily
@@ -135,6 +136,7 @@ Panel {
 
             Text {
               id: errorText
+              textFormat: Text.PlainText
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
@@ -144,10 +146,13 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+              maximumLineCount: 4
+              elide: Text.ElideRight
             }
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.service && root.service.lastError === "" && root.service.lastAction !== ""
             width: parent.width
             text: root.service ? root.service.lastAction : ""
@@ -155,6 +160,9 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
           }
 
           PanelSeparator { width: parent.width; foreground: root.foreground }
@@ -167,6 +175,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.service && root.service.accounts.length === 0
             width: parent.width
             text: !root.service ? ""
@@ -218,6 +227,7 @@ Panel {
               width: parent.width - saveButton.width - parent.spacing
               placeholderText: root.service && root.service.suggestedName
                 ? root.service.suggestedName : "Account name (optional)"
+              maximumLength: 120
               foreground: root.foreground
               font.family: root.fontFamily
               enabled: root.service && root.service.hasCurrentLogin && !root.service.busy
@@ -257,6 +267,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: "Each launched session keeps this account, even after you select another one."
             color: root.dim
@@ -278,6 +289,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.service && root.service.commandWrappersEnabled
             width: parent.width
             text: "New plain codex and claude processes also use the selected accounts."
@@ -302,6 +314,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: "Runs an isolated official " + (root.service ? root.service.providerLabel : "AI")
               + " login without disturbing active sessions."
@@ -313,6 +326,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: "Sessions opened from this panel use the selected login. Middle-click the bar icon to refresh."
             color: root.dim
@@ -350,6 +364,7 @@ Panel {
       spacing: Style.space(8)
 
       Text {
+        textFormat: Text.PlainText
         text: accountRow.switching ? "󰑓" : (accountRow.currentAccount ? "󰄬" : "󰀄")
         color: accountRow.currentAccount ? root.foreground : root.dim
         font.family: root.fontFamily
@@ -363,6 +378,7 @@ Panel {
         spacing: Style.space(1)
 
         Text {
+          textFormat: Text.PlainText
           Layout.fillWidth: true
           text: accountRow.account ? String(accountRow.account.name || "Account") : "Account"
           color: root.foreground
@@ -373,6 +389,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           Layout.fillWidth: true
           text: {
             if (!accountRow.account) return ""

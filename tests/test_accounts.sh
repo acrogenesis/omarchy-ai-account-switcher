@@ -186,6 +186,17 @@ helper switch claude "$first_claude" >/dev/null
 check test "$(sha256sum "$claude_home/.credentials.json" | cut -d' ' -f1)" = "$live_claude_hash"
 check jq -e '.accounts[] | select(.name == "Two") | .credentials.refreshToken == "refresh-two-rotated"' \
   "$switcher_dir/claude-accounts.json" >/dev/null
+
+# A stable Claude home may clear an expired access token while retaining the
+# refresh token. It remains selectable and its refreshable state is retained.
+jq '.claudeAiOauth.accessToken = ""' "$first_claude_home/.credentials.json" >"$fixture/refresh-only.json"
+mv "$fixture/refresh-only.json" "$first_claude_home/.credentials.json"
+chmod 600 "$first_claude_home/.credentials.json"
+refresh_only_selection=$(helper switch claude "$first_claude")
+check jq -e '.ok == true' <<<"$refresh_only_selection" >/dev/null
+check jq -e --arg id "$first_claude" '.accounts[] | select(.id == $id) |
+  .credentials.accessToken == "" and .credentials.refreshToken == "refresh-one"' \
+  "$switcher_dir/claude-accounts.json" >/dev/null
 check jq -e '.theme == "dark" and .oauthAccount.accountUuid == "uuid-one"' \
   "$first_claude_home/.claude.json" >/dev/null
 

@@ -38,6 +38,30 @@ Item {
   property bool hasActionError: false
   property string lastAction: ""
 
+  function boundedText(value, fallback, maximumLength) {
+    var source = value === undefined || value === null || String(value) === ""
+      ? String(fallback || "") : String(value)
+    var limit = Math.max(1, Number(maximumLength || 256))
+    source = source.trim()
+    return source.length <= limit ? source : source.slice(0, limit - 1) + "…"
+  }
+
+  function displayAccount(value) {
+    value = value || {}
+    return {
+      id: root.boundedText(value.id, "", 128),
+      name: root.boundedText(value.name, "Account", 120),
+      email: root.boundedText(value.email, "", 254),
+      plan_type: root.boundedText(value.plan_type, "", 80),
+      subscription_type: root.boundedText(value.subscription_type, "", 80),
+      org_name: root.boundedText(value.org_name, "", 120),
+      auth_mode: root.boundedText(value.auth_mode, "", 40),
+      is_active: value.is_active === true,
+      is_current: value.is_current === true,
+      last_used_at: root.boundedText(value.last_used_at, "", 80)
+    }
+  }
+
   function parseResult(text) {
     try {
       var parsed = JSON.parse(String(text || "{}"))
@@ -49,13 +73,15 @@ Item {
 
   function applyProviderStatus(payload) {
     payload = payload || {}
-    root.accounts = payload.accounts || []
-    root.activeAccountId = String(payload.active_account_id || "")
+    var receivedAccounts = Array.isArray(payload.accounts) ? payload.accounts : []
+    root.accounts = receivedAccounts.map(function(account) { return root.displayAccount(account) })
+    root.activeAccountId = root.boundedText(payload.active_account_id, "", 128)
     root.currentSaved = payload.current_saved === true
     root.hasCurrentLogin = payload.has_current_login === true
-    root.suggestedName = String(payload.suggested_name || "")
+    root.suggestedName = root.boundedText(payload.suggested_name, "", 120)
     root.canSwitch = payload.can_switch !== false
-    root.runningCount = Number(payload.running_count || 0)
+    var count = Number(payload.running_count || 0)
+    root.runningCount = isFinite(count) ? Math.max(0, Math.floor(count)) : 0
     var active = null
     for (var i = 0; i < root.accounts.length; i++) {
       if (String(root.accounts[i].id || "") === root.activeAccountId) {
@@ -63,10 +89,10 @@ Item {
         break
       }
     }
-    root.activeName = active ? String(active.name || "Account")
+    root.activeName = active ? root.boundedText(active.name, "Account", 120)
       : (root.hasCurrentLogin ? "Unsaved login" : "No " + root.providerLabel + " login")
     if (payload.ok === false && !root.hasActionError)
-      root.lastError = String(payload.error || "Could not load accounts")
+      root.lastError = root.boundedText(payload.error, "Could not load accounts", 320)
   }
 
   function applyStatus(payload) {
@@ -158,7 +184,8 @@ Item {
         if (!root.hasActionError) root.lastError = ""
       } else {
         if (!root.hasActionError)
-          root.lastError = String(payload.error || statusError.text || "Could not load accounts").trim()
+          root.lastError = root.boundedText(payload.error || statusError.text,
+            "Could not load accounts", 320)
       }
     }
   }
@@ -171,11 +198,12 @@ Item {
       root.busy = false
       root.switchingId = ""
       if (exitCode === 0 && payload.ok === true) {
-        root.lastAction = String(payload.message || "Done")
+        root.lastAction = root.boundedText(payload.message, "Done", 240)
         root.lastError = ""
         root.hasActionError = false
       } else {
-        root.lastError = String(payload.error || actionError.text || "Account action failed").trim()
+        root.lastError = root.boundedText(payload.error || actionError.text,
+          "Account action failed", 320)
         root.hasActionError = true
       }
       root.refresh()
@@ -204,12 +232,12 @@ Item {
       var payload = root.parseResult(wrapperOutput.text)
       root.busy = false
       if (exitCode === 0 && payload.ok === true) {
-        root.lastAction = String(payload.message || "Terminal commands enabled")
+        root.lastAction = root.boundedText(payload.message, "Terminal commands enabled", 240)
         root.lastError = ""
         root.hasActionError = false
       } else {
-        root.lastError = String(payload.error || wrapperError.text
-          || "Could not enable terminal command switching").trim()
+        root.lastError = root.boundedText(payload.error || wrapperError.text,
+          "Could not enable terminal command switching", 320)
         root.hasActionError = true
       }
       root.refresh()

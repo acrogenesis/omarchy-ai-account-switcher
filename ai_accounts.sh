@@ -249,7 +249,8 @@ claude_current_account() {
   if [[ ! -f $credentials_path || -L $credentials_path ]]; then printf 'null\n'; return; fi
   if ! credentials=$(jq -c '
     if type == "object" and (.claudeAiOauth | type) == "object" and
-      (.claudeAiOauth.accessToken | type) == "string" and .claudeAiOauth.accessToken != ""
+      (((.claudeAiOauth.accessToken | type) == "string" and .claudeAiOauth.accessToken != "") or
+       ((.claudeAiOauth.refreshToken | type) == "string" and .claudeAiOauth.refreshToken != ""))
     then . else error("invalid") end
   ' "$credentials_path" 2>/dev/null); then
     printf 'null\n'; return
@@ -509,7 +510,7 @@ write_claude_account() {
   atomic_preserving_write "$credentials_path" "$credentials_document"
 
   oauth_type=$(printf '%s' "$account" | jq -r '.oauth_account | type')
-  [[ $oauth_type == object ]] || return
+  [[ $oauth_type == object ]] || return 0
   if [[ -f $state_path && ! -L $state_path ]]; then
     state=$(jq -c 'if type == "object" then . else {} end' "$state_path" 2>/dev/null || printf '{}')
   else
@@ -682,16 +683,16 @@ sync_account_home_into_store() {
   local provider=$1 account_id=$2 home current index existing_name existing_created existing_last
   home=$(account_home "$provider" "$account_id")
   if [[ $provider == codex ]]; then
-    [[ -f $home/auth.json && ! -L $home/auth.json ]] || return
+    [[ -f $home/auth.json && ! -L $home/auth.json ]] || return 0
     current=$(CODEX_HOME="$home" codex_current_account)
   else
-    [[ -f $home/.credentials.json && ! -L $home/.credentials.json ]] || return
+    [[ -f $home/.credentials.json && ! -L $home/.credentials.json ]] || return 0
     current=$(CLAUDE_CONFIG_DIR="$home" claude_current_account false)
   fi
-  [[ $current != null ]] || return
+  [[ $current != null ]] || return 0
   index=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" \
     '[.accounts | to_entries[] | select(.value.id == $id)] | first | (.key // -1)')
-  (( index >= 0 )) || return
+  (( index >= 0 )) || return 0
   existing_name=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].name')
   existing_created=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].created_at')
   existing_last=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].last_used_at // null')
