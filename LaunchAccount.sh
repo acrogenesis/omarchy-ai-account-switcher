@@ -7,8 +7,8 @@ helper="$plugin_dir/ai_accounts.sh"
 provider=${1:-}
 account_id=${2:-}
 
-if [[ $provider != codex && $provider != claude ]]; then
-  echo "Usage: $0 codex|claude [ACCOUNT_ID]" >&2
+if [[ $provider != codex && $provider != claude && $provider != grok ]]; then
+  echo "Usage: $0 codex|claude|grok [ACCOUNT_ID]" >&2
   exit 2
 fi
 
@@ -26,6 +26,11 @@ if [[ $provider == codex ]]; then
   printf 'Codex · %s\n\n' "$account_name"
   export CODEX_HOME="$account_home"
   exec codex
+elif [[ $provider == grok ]]; then
+  command -v grok >/dev/null 2>&1 || { echo "Grok is not installed" >&2; exit 1; }
+  printf 'Grok · %s\n\n' "$account_name"
+  export GROK_HOME="$account_home"
+  exec grok
 else
   command -v claude >/dev/null 2>&1 || { echo "Claude is not installed" >&2; exit 1; }
   printf 'Claude · %s\n\n' "$account_name"

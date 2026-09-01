@@ -1,18 +1,19 @@
 # AI Account Switcher for Omarchy
 
-A native Omarchy Quattro bar plugin for saving and switching personal Codex CLI
-and Claude Code accounts.
+A native Omarchy Quattro bar plugin for saving and switching personal Codex CLI,
+Claude Code, and Grok CLI accounts.
 
 ![AI Account Switcher panel showing two fictional Claude accounts](preview.png)
 
 ## Features
 
-- Separate Codex and Claude account lists in one compact menubar panel.
-- Uses the official `codex login` and `claude auth login` flows.
-- Gives every account a stable isolated `CODEX_HOME` or `CLAUDE_CONFIG_DIR`.
+- Separate Codex, Claude, and Grok account lists in one compact menubar panel.
+- Uses the official `codex login`, `claude auth login`, and `grok login` flows.
+- Gives every account a stable isolated `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or
+  `GROK_HOME`.
 - Opens the selected account in a new terminal without rewriting the shared
-  Codex or Claude login.
-- Optionally routes ordinary `codex` and `claude` commands to the selected
+  Codex, Claude, or Grok login.
+- Optionally routes ordinary `codex`, `claude`, and `grok` commands to the selected
   account, while honoring an explicitly set provider home.
 - Lets existing sessions keep the account they started with while other
   accounts run alongside them.
@@ -28,6 +29,7 @@ and Claude Code accounts.
 - `bash`, `jq`, `flock`, and `base64` (included in Omarchy's base system)
 - `codex` for Codex accounts
 - `claude` for Claude accounts
+- `grok` for Grok accounts
 
 ## Install
 
@@ -35,21 +37,21 @@ and Claude Code accounts.
 omarchy plugin add https://github.com/acrogenesis/omarchy-ai-account-switcher.git --enable
 ```
 
-The plugin appears in the right side of the bar. Open it, select Codex or
-Claude, and save the login currently active on the machine. Select any saved
-account and press **Open Codex/Claude as ...** to start a terminal using that
+The plugin appears in the right side of the bar. Open it, select Codex,
+Claude, or Grok, and save the login currently active on the machine. Select any saved
+account and press **Open Codex/Claude/Grok as ...** to start a terminal using that
 account's isolated provider home. Selecting another account later does not
 change any already-open session.
 
 **Add another account** immediately launches the provider's official login in
 an isolated temporary home; there is no pre-login confirmation prompt. After
 login, the plugin promotes it to a stable private account home. No operation
-requires closing active Codex or Claude sessions.
+requires closing active Codex, Claude, or Grok sessions.
 
-Press **Make plain codex and claude commands follow selection** once to install
+Press **Make plain codex, claude, and grok commands follow selection** once to install
 recoverable command routers in `~/.local/bin` plus a private mise shell-alias
 fragment that keeps those routers ahead of mise-managed provider binaries.
-After that, ordinary new `codex` and `claude` processes use the menubar
+After that, ordinary new `codex`, `claude`, and `grok` processes use the menubar
 selection from any terminal. Processes already running—and new conversations
 created inside one of those existing processes—keep the account that process
 started with.
@@ -142,7 +144,7 @@ omarchy-shell acrogenesis.ai-account-switcher launchSelected claude
 omarchy-shell acrogenesis.ai-account-switcher enableCommandSwitching
 ```
 
-Provider values are `codex` and `claude`.
+Provider values are `codex`, `claude`, and `grok`.
 
 ## Development
 

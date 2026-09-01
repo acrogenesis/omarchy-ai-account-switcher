@@ -5,7 +5,7 @@
   "version": "0.3.4",
   "author": "acrogenesis",
   "license": "MIT",
-  "description": "Open isolated Codex and Claude Code accounts from the Omarchy bar without closing active sessions.",
+  "description": "Open isolated Codex, Claude Code, and Grok accounts from the Omarchy bar without closing active sessions.",
   "kinds": [
     "service",
     "bar-widget"
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "AI accounts",
-    "description": "Switch the Codex CLI or Claude Code login used by new sessions.",
+    "description": "Switch the Codex CLI, Claude Code, or Grok login used by new sessions.",
     "category": "AI",
     "allowMultiple": false,
     "defaultSection": "right"

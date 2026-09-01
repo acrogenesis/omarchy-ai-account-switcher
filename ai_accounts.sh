@@ -22,6 +22,7 @@ provider_store() {
   case $1 in
     codex) printf '%s/codex-accounts.json\n' "$CONFIG_DIR" ;;
     claude) printf '%s/claude-accounts.json\n' "$CONFIG_DIR" ;;
+    grok) printf '%s/grok-accounts.json\n' "$CONFIG_DIR" ;;
     *) fail "Unknown provider: $1" ;;
   esac
 }
@@ -30,6 +31,7 @@ provider_source_home() {
   case $1 in
     codex) printf '%s\n' "${OMARCHY_AI_SOURCE_CODEX_HOME:-${CODEX_HOME:-$HOME/.codex}}" ;;
     claude) printf '%s\n' "${OMARCHY_AI_SOURCE_CLAUDE_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}" ;;
+    grok) printf '%s\n' "${OMARCHY_AI_SOURCE_GROK_HOME:-${GROK_HOME:-$HOME/.grok}}" ;;
     *) fail "Unknown provider: $1" ;;
   esac
 }
@@ -59,6 +61,14 @@ link_shared_config() {
   case $provider in
     codex)
       for entry in AGENTS.md agents config.toml hooks.json memories plugins rules skills; do
+        target="$home/$entry"
+        if [[ ( -e $source/$entry || -L $source/$entry ) && ! -e $target && ! -L $target ]]; then
+          ln -s -- "$source/$entry" "$target"
+        fi
+      done
+      ;;
+    grok)
+      for entry in GROK.md config.toml hooks rules skills workflows; do
         target="$home/$entry"
         if [[ ( -e $source/$entry || -L $source/$entry ) && ! -e $target && ! -L $target ]]; then
           ln -s -- "$source/$entry" "$target"
@@ -156,6 +166,10 @@ codex_auth_path() {
   printf '%s/auth.json\n' "${CODEX_HOME:-$HOME/.codex}"
 }
 
+grok_auth_path() {
+  printf '%s/auth.json\n' "${GROK_HOME:-$HOME/.grok}"
+}
+
 claude_credentials_path() {
   printf '%s/.credentials.json\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 }
@@ -228,6 +242,60 @@ codex_current_account() {
       created_at: $created,
       last_used_at: null
     }'
+}
+
+# ~/.grok/auth.json is a map of "<issuer>::<client-id>" -> identity entry.
+# Several identities can be signed in at once; the newest entry that carries a
+# usable key is treated as the current login, and the saved account keeps just
+# that one entry so accounts stay independent of each other.
+grok_current_account() {
+  local path auth selected id created email principal mode name suffix
+  path=$(grok_auth_path)
+  if [[ ! -f $path || -L $path ]]; then printf 'null\n'; return; fi
+  if ! auth=$(jq -c 'if type == "object" then . else error("invalid") end' "$path" 2>/dev/null); then
+    printf 'null\n'; return
+  fi
+  selected=$(printf '%s' "$auth" | jq -c '
+    [to_entries[] | select((.value | type) == "object" and
+      (.value.key | type) == "string" and .value.key != "")]
+    | sort_by(.value.create_time // "") | last // null')
+  if [[ -z $selected || $selected == null ]]; then printf 'null\n'; return; fi
+  id=$(new_id)
+  created=$(utc_now)
+  email=$(printf '%s' "$selected" | jq -r '.value.email // empty')
+  principal=$(printf '%s' "$selected" | jq -r '.value.principal_id // empty')
+  mode=$(printf '%s' "$selected" | jq -r '.value.auth_mode // empty')
+  suffix=${principal: -8}
+  name=${email:-${suffix:+Grok account ($suffix)}}
+  name=${name:-Grok account}
+  printf '%s' "$selected" | jq -c \
+    --arg id "$id" --arg name "$name" --arg email "$email" --arg principal "$principal" \
+    --arg mode "$mode" --arg created "$created" '{
+      id: $id,
+      name: $name,
+      email: (if $email == "" then null else $email end),
+      principal_id: (if $principal == "" then null else $principal end),
+      auth_mode: (if $mode == "" then null else $mode end),
+      auth_data: {key: .key, entry: .value},
+      created_at: $created,
+      last_used_at: null
+    }'
+}
+
+grok_match_index() {
+  local candidate=$1
+  printf '%s' "$STORE_JSON" | jq -r --slurpfile candidate <(printf '%s\n' "$candidate") '
+    ($candidate[0]) as $c |
+    [.accounts | to_entries[] | select(
+      if ($c.principal_id // "") != "" then
+        (.value.principal_id // "") == $c.principal_id
+      elif ($c.email // "") != "" then
+        ((.value.email // "") | ascii_downcase) == (($c.email // "") | ascii_downcase)
+      else
+        (.value.auth_data.entry.key // "") == ($c.auth_data.entry.key // "")
+      end
+    )] | first | (.key // -1)
+  '
 }
 
 claude_auth_status() {
@@ -329,6 +397,7 @@ provider_current_account() {
   case $1 in
     codex) codex_current_account ;;
     claude) claude_current_account "${2:-false}" ;;
+    grok) grok_current_account ;;
   esac
 }
 
@@ -336,6 +405,7 @@ provider_match_index() {
   case $1 in
     codex) codex_match_index "$2" ;;
     claude) claude_match_index "$2" ;;
+    grok) grok_match_index "$2" ;;
   esac
 }
 
@@ -354,6 +424,8 @@ running_processes() {
         if ((command == "codex" || first == "codex") &&
             lowered !~ /codex app-server/ && lowered !~ /codex-code-mode-host/) print pid
       } else if (provider == "claude" && (command == "claude" || first == "claude")) {
+        print pid
+      } else if (provider == "grok" && (command == "grok" || first == "grok")) {
         print pid
       }
     }
@@ -379,7 +451,20 @@ provider_status() {
   count=$(running_count "$provider")
   if [[ $current == null ]]; then has_current=false; suggested=''; else has_current=true; suggested=$(printf '%s' "$current" | jq -r '.name // empty'); fi
 
-  if [[ $provider == codex ]]; then
+  if [[ $provider == grok ]]; then
+    printf '%s' "$STORE_JSON" | jq -c \
+      --arg active "$active_id" --arg current "$current_id" --arg suggested "$suggested" \
+      --argjson has_current "$has_current" --argjson count "$count" '{
+        ok: true, provider: "grok",
+        accounts: [.accounts[] | {
+          id: (.id | tostring), name: (.name // "Account"), email, auth_mode,
+          is_active: (.id == $active), is_current: (.id == $current), last_used_at
+        }],
+        active_account_id: (if $active == "" then null else $active end),
+        current_saved: ($current != ""), has_current_login: $has_current,
+        suggested_name: $suggested, can_switch: true, running_count: $count
+      }'
+  elif [[ $provider == codex ]]; then
     printf '%s' "$STORE_JSON" | jq -c \
       --arg active "$active_id" --arg current "$current_id" --arg suggested "$suggested" \
       --argjson has_current "$has_current" --argjson count "$count" '{
@@ -409,24 +494,27 @@ provider_status() {
 }
 
 combined_status() {
-  local codex claude wrappers=false marker='omarchy-ai-account-switcher command router v1'
+  local codex claude grok wrappers=false marker='omarchy-ai-account-switcher command router v1'
   local wrapper_bin="${OMARCHY_AI_SWITCHER_BIN_DIR:-$HOME/.local/bin}"
   local mise_marker='omarchy-ai-account-switcher mise aliases v1'
   local mise_conf_dir="${OMARCHY_AI_SWITCHER_MISE_CONF_DIR:-${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}/conf.d}"
   local mise_fragment="$mise_conf_dir/omarchy-ai-account-switcher.toml"
   codex=$(provider_status codex)
   claude=$(provider_status claude)
+  grok=$(provider_status grok)
   if [[ -f $wrapper_bin/codex && ! -L $wrapper_bin/codex &&
-    -f $wrapper_bin/claude && ! -L $wrapper_bin/claude ]] &&
+    -f $wrapper_bin/claude && ! -L $wrapper_bin/claude &&
+    -f $wrapper_bin/grok && ! -L $wrapper_bin/grok ]] &&
     grep -Fq "$marker" "$wrapper_bin/codex" 2>/dev/null &&
     grep -Fq "$marker" "$wrapper_bin/claude" 2>/dev/null &&
+    grep -Fq "$marker" "$wrapper_bin/grok" 2>/dev/null &&
     [[ -f $mise_fragment && ! -L $mise_fragment ]] &&
     grep -Fq "$mise_marker" "$mise_fragment" 2>/dev/null; then
     wrappers=true
   fi
   jq -cn --slurpfile codex <(printf '%s\n' "$codex") --slurpfile claude <(printf '%s\n' "$claude") \
-    --argjson wrappers "$wrappers" \
-    '{ok: true, command_wrappers_enabled: $wrappers, providers: {codex: $codex[0], claude: $claude[0]}}'
+    --slurpfile grok <(printf '%s\n' "$grok") --argjson wrappers "$wrappers" \
+    '{ok: true, command_wrappers_enabled: $wrappers, providers: {codex: $codex[0], claude: $claude[0], grok: $grok[0]}}'
 }
 
 import_current() {
@@ -488,6 +576,14 @@ write_codex_account() {
     }')
   fi
   atomic_private_write "$path" "$auth"
+}
+
+write_grok_account() {
+  local destination=${1:-} account path value
+  account=$(cat)
+  path=${destination:-$(grok_auth_path)}
+  value=$(printf '%s' "$account" | jq -c '{(.auth_data.key): .auth_data.entry}')
+  atomic_private_write "$path" "$value"
 }
 
 write_claude_account() {
@@ -659,11 +755,15 @@ materialize_account_home() {
   ensure_private_directory "$home"
   link_shared_config "$provider" "$home"
 
-  if [[ $provider == codex ]]; then
+  if [[ $provider == codex || $provider == grok ]]; then
     credential="$home/auth.json"
     if [[ $force == true || ! -e $credential ]]; then
       [[ ! -L $credential ]] || fail "Refusing to replace symlink: $credential"
-      printf '%s' "$account" | write_codex_account "$credential"
+      if [[ $provider == codex ]]; then
+        printf '%s' "$account" | write_codex_account "$credential"
+      else
+        printf '%s' "$account" | write_grok_account "$credential"
+      fi
     fi
   else
     credential="$home/.credentials.json"
@@ -685,6 +785,9 @@ sync_account_home_into_store() {
   if [[ $provider == codex ]]; then
     [[ -f $home/auth.json && ! -L $home/auth.json ]] || return 0
     current=$(CODEX_HOME="$home" codex_current_account)
+  elif [[ $provider == grok ]]; then
+    [[ -f $home/auth.json && ! -L $home/auth.json ]] || return 0
+    current=$(GROK_HOME="$home" grok_current_account)
   else
     [[ -f $home/.credentials.json && ! -L $home/.credentials.json ]] || return 0
     current=$(CLAUDE_CONFIG_DIR="$home" claude_current_account false)
@@ -793,7 +896,7 @@ main() {
         else usage
         fi
       done
-      [[ $provider == codex || $provider == claude ]] || fail "Unknown provider: $provider"
+      [[ $provider == codex || $provider == claude || $provider == grok ]] || fail "Unknown provider: $provider"
       import_current "$provider" "$name" "$activate"
       ;;
     switch)
@@ -802,7 +905,7 @@ main() {
       ;;
     prepare-launch)
       [[ $# == 2 || $# == 3 ]] || usage
-      [[ $2 == codex || $2 == claude ]] || fail "Unknown provider: $2"
+      [[ $2 == codex || $2 == claude || $2 == grok ]] || fail "Unknown provider: $2"
       prepare_launch "$2" "${3:-}"
       ;;
     rename)

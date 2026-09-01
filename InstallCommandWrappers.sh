@@ -66,19 +66,21 @@ preflight_mise_fragment() {
 }
 
 install_mise_fragment() {
-  local temporary codex_command claude_command
+  local temporary codex_command claude_command grok_command
   if [[ ( -e $mise_fragment || -L $mise_fragment ) ]] && ! is_our_mise_fragment "$mise_fragment" &&
     [[ ! -e $mise_backup && ! -L $mise_backup ]]; then
     cp -a -- "$mise_fragment" "$mise_backup"
   fi
   printf -v codex_command '%q' "$bin_dir/codex"
   printf -v claude_command '%q' "$bin_dir/claude"
+  printf -v grok_command '%q' "$bin_dir/grok"
   temporary=$(mktemp "$mise_conf_dir/.omarchy-ai-account-switcher.XXXXXX")
   {
     printf '# %s\n' "$mise_marker"
     printf '[shell_alias]\n'
     printf 'codex = %s\n' "$(jq -cn --arg value "$codex_command" '$value')"
     printf 'claude = %s\n' "$(jq -cn --arg value "$claude_command" '$value')"
+    printf 'grok = %s\n' "$(jq -cn --arg value "$grok_command" '$value')"
   } >"$temporary"
   chmod 600 -- "$temporary"
   mv -fT -- "$temporary" "$mise_fragment"
@@ -121,9 +123,11 @@ case ${1:-install} in
   install)
     preflight_install codex
     preflight_install claude
+    preflight_install grok
     preflight_mise_fragment
     install_wrapper codex
     install_wrapper claude
+    install_wrapper grok
     install_mise_fragment
     jq -cn '{ok: true, message: "Terminal commands now follow the selected accounts"}'
     ;;
@@ -131,6 +135,7 @@ case ${1:-install} in
     remove_mise_fragment
     remove_wrapper codex
     remove_wrapper claude
+    remove_wrapper grok
     jq -cn '{ok: true, message: "Restored the previous terminal commands"}'
     ;;
   *) fail "Usage: InstallCommandWrappers.sh [install|remove]" ;;

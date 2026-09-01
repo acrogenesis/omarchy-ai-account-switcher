@@ -8,19 +8,23 @@ Item {
   readonly property string home: Quickshell.env("HOME")
   readonly property string codexStorePath: home + "/.config/omarchy/ai-account-switcher/codex-accounts.json"
   readonly property string claudeStorePath: home + "/.config/omarchy/ai-account-switcher/claude-accounts.json"
+  readonly property string grokStorePath: home + "/.config/omarchy/ai-account-switcher/grok-accounts.json"
   readonly property string helperPath: decodeURIComponent(
     String(Qt.resolvedUrl("ai_accounts.sh")).replace(/^file:\/\//, ""))
   readonly property string codexSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("AddCodexAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string claudeSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("AddClaudeAccount.sh")).replace(/^file:\/\//, ""))
+  readonly property string grokSetupPath: decodeURIComponent(
+    String(Qt.resolvedUrl("AddGrokAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string launchPath: decodeURIComponent(
     String(Qt.resolvedUrl("LaunchAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string wrapperSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("InstallCommandWrappers.sh")).replace(/^file:\/\//, ""))
 
   property string provider: "codex"
-  readonly property string providerLabel: provider === "claude" ? "Claude" : "Codex"
+  readonly property string providerLabel: provider === "claude" ? "Claude"
+    : provider === "grok" ? "Grok" : "Codex"
   property var providerStatuses: ({})
   property var accounts: []
   property string activeAccountId: ""
@@ -102,7 +106,7 @@ Item {
   }
 
   function selectProvider(value) {
-    var next = value === "claude" ? "claude" : "codex"
+    var next = value === "claude" || value === "grok" ? value : "codex"
     root.provider = next
     root.lastError = ""
     root.hasActionError = false
@@ -148,7 +152,8 @@ Item {
     root.hasActionError = false
     root.lastAction = ""
     setupProcess.command = ["omarchy-launch-terminal", "bash",
-      root.provider === "claude" ? root.claudeSetupPath : root.codexSetupPath]
+      root.provider === "claude" ? root.claudeSetupPath
+        : root.provider === "grok" ? root.grokSetupPath : root.codexSetupPath]
     setupProcess.running = true
   }
 
@@ -255,6 +260,15 @@ Item {
 
   FileView {
     path: root.claudeStorePath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.refresh()
+    onFileChanged: reload()
+    onLoadFailed: root.refresh()
+  }
+
+  FileView {
+    path: root.grokStorePath
     watchChanges: true
     printErrors: false
     onLoaded: root.refresh()
