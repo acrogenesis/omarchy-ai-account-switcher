@@ -55,6 +55,21 @@ jq -e --arg home "$claude_home" '
 ' <<<"$(tail -n 1 <<<"$claude_output")" >/dev/null
 [[ $(sha256sum "$live_claude/.credentials.json" | cut -d' ' -f1) == "$claude_live_hash" ]]
 
+# A distrobox-marked account launches through distrobox enter with the same
+# private home, and the live login still never changes.
+ln -s "$project_dir/tests/fake_distrobox.sh" "$fake_bin/distrobox"
+distrobox_log="$test_dir/distrobox.log"
+env "${common_env[@]}" bash "$project_dir/ai_accounts.sh" set-distrobox codex "$codex_id" devbox >/dev/null
+boxed_output=$(env "${common_env[@]}" FAKE_DISTROBOX_LOG="$distrobox_log" \
+  bash "$project_dir/LaunchAccount.sh" codex "$codex_id")
+jq -e --arg home "$codex_home" '
+  select(.launched == true and .home == $home and .account_id == "codex-one")
+' <<<"$(tail -n 1 <<<"$boxed_output")" >/dev/null
+rg -Fq "enter devbox -- env CODEX_HOME=$codex_home codex" "$distrobox_log"
+[[ $(sha256sum "$live_codex/auth.json" | cut -d' ' -f1) == "$codex_live_hash" ]]
+env "${common_env[@]}" bash "$project_dir/ai_accounts.sh" set-distrobox codex "$codex_id" >/dev/null
+rm -- "$fake_bin/distrobox"
+
 # Installed command routers make plain CLI invocations follow the selection,
 # while explicit provider homes bypass routing and removal restores old commands.
 wrapper_bin="$test_dir/wrapper-bin"

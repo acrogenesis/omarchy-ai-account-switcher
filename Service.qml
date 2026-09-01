@@ -56,6 +56,7 @@ Item {
       subscription_type: root.boundedText(value.subscription_type, "", 80),
       org_name: root.boundedText(value.org_name, "", 120),
       auth_mode: root.boundedText(value.auth_mode, "", 40),
+      distrobox: root.boundedText(value.distrobox, "", 64),
       is_active: value.is_active === true,
       is_current: value.is_current === true,
       last_used_at: root.boundedText(value.last_used_at, "", 80)
@@ -140,6 +141,11 @@ Item {
 
   function removeAccount(accountId) {
     runAction(["remove", root.provider, String(accountId)], "")
+  }
+
+  function setDistrobox(accountId, box) {
+    if (String(accountId || "") === "") return
+    runAction(["set-distrobox", root.provider, String(accountId), String(box || "")], "")
   }
 
   function addAnotherAccount() {

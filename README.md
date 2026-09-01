@@ -46,6 +46,17 @@ an isolated temporary home; there is no pre-login confirmation prompt. After
 login, the plugin promotes it to a stable private account home. No operation
 requires closing active Codex or Claude sessions.
 
+An account can be marked as living in a [distrobox](https://distrobox.it)
+container: `ai_accounts.sh set-distrobox codex|claude ACCOUNT_ID BOX` (empty
+BOX clears it), or save it that way with
+`import-current ... --distrobox=BOX`. Opening such an account runs
+`distrobox enter BOX -- env <PROVIDER_HOME>=<account home> <cli>`, so the CLI,
+its policies, and its tooling inside the container are used while the account
+keeps its stable private home (distrobox's shared home keeps the absolute
+path valid inside the box). The panel shows `IN BOX` on such accounts.
+Command routers ignore the marker — plain `codex`/`claude` on the host stays
+a host process; enter the box yourself when you want a boxed plain command.
+
 Press **Make plain codex and claude commands follow selection** once to install
 recoverable command routers in `~/.local/bin` plus a private mise shell-alias
 fragment that keeps those routers ahead of mise-managed provider binaries.
