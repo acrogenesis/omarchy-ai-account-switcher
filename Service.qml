@@ -37,6 +37,15 @@ Item {
   property string lastError: ""
   property bool hasActionError: false
   property string lastAction: ""
+  property var usageByAccount: ({})
+  property var usageQueue: []
+  property int usageQueueIndex: 0
+  property string usageProvider: ""
+  property string usageAccountId: ""
+  property double usageRefreshedAt: 0
+  property bool usageRefreshRequested: false
+  readonly property bool usageBusy: usageProcess.running
+    || usageQueueIndex < usageQueue.length
 
   function boundedText(value, fallback, maximumLength) {
     var source = value === undefined || value === null || String(value) === ""
@@ -60,6 +69,38 @@ Item {
       is_current: value.is_current === true,
       last_used_at: root.boundedText(value.last_used_at, "", 80)
     }
+  }
+
+  function displayUsage(value) {
+    value = value || {}
+    var receivedWindows = Array.isArray(value.windows) ? value.windows : []
+    var windows = receivedWindows.slice(0, 4).map(function(window) {
+      window = window || {}
+      var percent = Number(window.used_percent)
+      var reset = Number(window.resets_at)
+      return {
+        key: root.boundedText(window.key, "window", 40),
+        label: root.boundedText(window.label, "limit", 20),
+        used_percent: isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0,
+        resets_at: isFinite(reset) && reset > 0 ? reset : 0
+      }
+    })
+    return {
+      loading: value.loading === true,
+      available: value.available === true && windows.length > 0,
+      windows: windows,
+      reason: root.boundedText(value.reason, "Usage unavailable", 120),
+      fetched_at: root.boundedText(value.fetched_at, "", 80)
+    }
+  }
+
+  function usageKey(providerName, accountId) {
+    return String(providerName || "") + ":" + String(accountId || "")
+  }
+
+  function usageFor(accountId) {
+    var key = root.usageKey(root.provider, accountId)
+    return root.usageByAccount[key] || root.displayUsage({ loading: root.usageBusy })
   }
 
   function parseResult(text) {
@@ -110,8 +151,59 @@ Item {
     root.applyProviderStatus(root.providerStatuses[next])
   }
 
-  function refresh() {
+  function refresh(forceUsage) {
+    if (forceUsage !== false) root.usageRefreshRequested = true
     if (!statusProcess.running && !actionProcess.running) statusProcess.running = true
+  }
+
+  function refreshUsage(force) {
+    var now = Date.now()
+    if (root.usageBusy) {
+      if (force === true) root.usageRefreshRequested = true
+      return
+    }
+    if (force !== true && now - root.usageRefreshedAt < 300000) return
+
+    var queue = []
+    var nextUsage = Object.assign({}, root.usageByAccount)
+    var providers = ["codex", "claude"]
+    for (var p = 0; p < providers.length; p++) {
+      var providerName = providers[p]
+      var status = root.providerStatuses[providerName] || {}
+      var providerAccounts = Array.isArray(status.accounts) ? status.accounts : []
+      for (var i = 0; i < providerAccounts.length; i++) {
+        var accountId = root.boundedText(providerAccounts[i].id, "", 128)
+        if (accountId === "") continue
+        queue.push({ provider: providerName, id: accountId })
+        var key = root.usageKey(providerName, accountId)
+        if (!nextUsage[key]) nextUsage[key] = root.displayUsage({ loading: true })
+      }
+    }
+    root.usageByAccount = nextUsage
+    root.usageQueue = queue
+    root.usageQueueIndex = 0
+    root.usageRefreshedAt = now
+    root.runNextUsage()
+  }
+
+  function runNextUsage() {
+    if (usageProcess.running) return
+    if (root.usageQueueIndex >= root.usageQueue.length) {
+      root.usageQueue = []
+      root.usageQueueIndex = 0
+      if (root.usageRefreshRequested) {
+        root.usageRefreshRequested = false
+        root.refreshUsage(true)
+      }
+      return
+    }
+    var item = root.usageQueue[root.usageQueueIndex]
+    root.usageQueueIndex++
+    root.usageProvider = String(item.provider || "")
+    root.usageAccountId = String(item.id || "")
+    usageProcess.command = ["bash", root.helperPath, "usage",
+      root.usageProvider, root.usageAccountId]
+    usageProcess.running = true
   }
 
   function runAction(arguments, switchingId) {
@@ -182,11 +274,34 @@ Item {
       if (exitCode === 0 && payload.ok === true) {
         root.applyStatus(payload)
         if (!root.hasActionError) root.lastError = ""
+        var forceUsage = root.usageRefreshRequested
+        root.usageRefreshRequested = false
+        root.refreshUsage(forceUsage)
       } else {
         if (!root.hasActionError)
           root.lastError = root.boundedText(payload.error || statusError.text,
             "Could not load accounts", 320)
       }
+    }
+  }
+
+  property Process usageProcess: Process {
+    stdout: StdioCollector { id: usageOutput; waitForEnd: true }
+    stderr: StdioCollector { id: usageError; waitForEnd: true }
+    onExited: function(exitCode) {
+      var payload = root.parseResult(usageOutput.text)
+      var key = root.usageKey(root.usageProvider, root.usageAccountId)
+      var nextUsage = Object.assign({}, root.usageByAccount)
+      if (exitCode === 0 && payload.ok === true) {
+        nextUsage[key] = root.displayUsage(payload)
+      } else {
+        nextUsage[key] = root.displayUsage({
+          available: false,
+          reason: payload.error || usageError.text || "Usage unavailable"
+        })
+      }
+      root.usageByAccount = nextUsage
+      Qt.callLater(root.runNextUsage)
     }
   }
 
@@ -272,8 +387,8 @@ Item {
     interval: 30000
     running: true
     repeat: true
-    onTriggered: root.refresh()
+    onTriggered: root.refresh(false)
   }
 
-  Component.onCompleted: root.refresh()
+  Component.onCompleted: root.refresh(false)
 }

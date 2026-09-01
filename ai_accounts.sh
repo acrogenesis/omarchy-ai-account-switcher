@@ -771,8 +771,176 @@ remove_account() {
   jq -cn '{ok: true, message: "Removed saved account"}'
 }
 
+usage_unavailable() {
+  local provider=$1 account_id=$2 reason=$3
+  jq -cn --arg provider "$provider" --arg id "$account_id" --arg reason "$reason" \
+    --arg fetched_at "$(utc_now)" '{
+      ok: true,
+      provider: $provider,
+      account_id: $id,
+      available: false,
+      windows: [],
+      reason: $reason,
+      fetched_at: $fetched_at
+    }'
+}
+
+provider_cli() {
+  local provider=$1 directory candidate=''
+  while IFS= read -r directory; do
+    [[ -n $directory ]] || directory=.
+    candidate="$directory/$provider"
+    [[ -x $candidate && ! -d $candidate ]] || continue
+    if head -c 4096 -- "$candidate" 2>/dev/null |
+      grep -Fq 'omarchy-ai-account-switcher command router v1'; then
+      continue
+    fi
+    printf '%s\n' "$candidate"
+    return
+  done < <(printf '%s' "$PATH" | tr ':' '\n')
+  if command -v mise >/dev/null 2>&1; then
+    candidate=$(mise which "$provider" 2>/dev/null || true)
+    if [[ -n $candidate && -x $candidate ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  fi
+  printf '\n'
+}
+
+codex_usage() {
+  local account_id=$1 home=$2 account=$3 cli server_in server_out server_pid line response=''
+  if [[ $(printf '%s' "$account" | jq -r '.auth_mode // empty') == api_key ]]; then
+    usage_unavailable codex "$account_id" "Plan usage is unavailable for API key accounts"
+    return
+  fi
+  cli=$(provider_cli codex)
+  if [[ -z $cli ]]; then
+    usage_unavailable codex "$account_id" "Codex is not installed"
+    return
+  fi
+
+  coproc usage_server {
+    CODEX_HOME="$home" timeout 15 "$cli" app-server --stdio 2>/dev/null
+  }
+  server_in=${usage_server[1]}
+  server_out=${usage_server[0]}
+  server_pid=$usage_server_PID
+  printf '%s\n' \
+    '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"omarchy-ai-account-switcher","title":"Omarchy AI Account Switcher","version":"0.1.0"}}}' \
+    '{"method":"initialized","params":{}}' \
+    '{"method":"account/rateLimits/read","id":2,"params":{}}' >&"$server_in"
+
+  while IFS= read -r -t 15 line <&"$server_out"; do
+    if jq -e '.id == 2' >/dev/null 2>&1 <<<"$line"; then
+      response=$line
+      break
+    fi
+  done
+  exec {server_in}>&-
+  kill "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+
+  if [[ -z $response ]] || ! jq -e '.result.rateLimits | type == "object"' \
+    >/dev/null 2>&1 <<<"$response"; then
+    usage_unavailable codex "$account_id" "Could not load Codex usage"
+    return
+  fi
+
+  jq -c --arg provider codex --arg id "$account_id" --arg fetched_at "$(utc_now)" '
+    def window_label:
+      if . == 300 then "5h"
+      elif . == 1440 then "24h"
+      elif . == 10080 then "7d"
+      elif . % 1440 == 0 then ((. / 1440 | tostring) + "d")
+      elif . % 60 == 0 then ((. / 60 | tostring) + "h")
+      else (tostring + "m") end;
+    def bounded_percent:
+      tonumber | if . < 0 then 0 elif . > 100 then 100 else . end;
+    .result.rateLimits as $limits |
+    [$limits.primary, $limits.secondary]
+      | map(select(type == "object" and (.usedPercent | type) == "number"))
+      | unique_by(.windowDurationMins)
+      | map({
+          key: (if .windowDurationMins == 300 then "five_hour"
+            elif .windowDurationMins == 10080 then "seven_day"
+            else ("window_" + (.windowDurationMins | tostring)) end),
+          label: (.windowDurationMins | window_label),
+          used_percent: (.usedPercent | bounded_percent),
+          resets_at: (.resetsAt // null)
+        }) as $windows |
+    {
+      ok: true,
+      provider: $provider,
+      account_id: $id,
+      available: ($windows | length > 0),
+      windows: $windows,
+      reason: (if $windows | length > 0 then null else "No Codex plan limits were reported" end),
+      plan_type: ($limits.planType // null),
+      fetched_at: $fetched_at
+    }
+  ' <<<"$response"
+}
+
+claude_usage() {
+  local account_id=$1 home=$2 cli output result
+  cli=$(provider_cli claude)
+  if [[ -z $cli ]]; then
+    usage_unavailable claude "$account_id" "Claude Code is not installed"
+    return
+  fi
+  if ! output=$(CLAUDE_CONFIG_DIR="$home" LC_ALL=C timeout 20 "$cli" --safe-mode \
+    --no-session-persistence -p '/usage' --output-format json 2>/dev/null) ||
+    ! result=$(printf '%s' "$output" | jq -er \
+      'select(type == "object" and .is_error != true) | .result | select(type == "string")' \
+      2>/dev/null); then
+    usage_unavailable claude "$account_id" "Sign in to refresh Claude usage"
+    return
+  fi
+
+  jq -cn --arg provider claude --arg id "$account_id" --arg text "$result" \
+    --arg fetched_at "$(utc_now)" '
+    def percent($pattern):
+      [$text | split("\n")[] | capture($pattern)? | .percent | tonumber] | first;
+    [
+      {key: "five_hour", label: "5h",
+        used_percent: percent("^Current session: (?<percent>[0-9]+(?:\\.[0-9]+)?)% used")},
+      {key: "seven_day", label: "7d",
+        used_percent: percent("^Current week \\(all models\\): (?<percent>[0-9]+(?:\\.[0-9]+)?)% used")}
+    ] | map(select(.used_percent != null) | . + {resets_at: null}) as $windows |
+    {
+      ok: true,
+      provider: $provider,
+      account_id: $id,
+      available: ($windows | length > 0),
+      windows: $windows,
+      reason: (if $windows | length > 0 then null else "Claude did not report plan limits" end),
+      fetched_at: $fetched_at
+    }'
+}
+
+account_usage() {
+  local provider=$1 account_id=$2 store_path account home
+  validate_account_id "$account_id"
+  store_path=$(provider_store "$provider")
+  load_store "$store_path"
+  account=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" \
+    '.accounts[] | select(.id == $id)' | head -n 1)
+  [[ -n $account ]] || fail "Account not found"
+  home=$(account_home "$provider" "$account_id")
+  if [[ ! -d $home || -L $home ]]; then
+    usage_unavailable "$provider" "$account_id" "The private account home is unavailable"
+    return
+  fi
+  case $provider in
+    codex) codex_usage "$account_id" "$home" "$account" ;;
+    claude) claude_usage "$account_id" "$home" ;;
+    *) fail "Unknown provider: $provider" ;;
+  esac
+}
+
 usage() {
-  printf 'Usage: %s status | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
+  printf 'Usage: %s status | usage PROVIDER ID | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
   exit 2
 }
 
@@ -782,6 +950,11 @@ main() {
     status)
       [[ $# == 1 ]] || usage
       combined_status
+      ;;
+    usage)
+      [[ $# == 3 ]] || usage
+      [[ $2 == codex || $2 == claude ]] || fail "Unknown provider: $2"
+      account_usage "$2" "$3"
       ;;
     import-current)
       [[ $# -ge 2 ]] || usage

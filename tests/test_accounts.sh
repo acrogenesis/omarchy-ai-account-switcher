@@ -21,14 +21,17 @@ reset_fixture() {
   claude_home="$fixture/claude"
   fake_bin="$fixture/bin"
   fake_log="$fixture/claude.log"
+  fake_codex_log="$fixture/codex.log"
   mkdir -p "$codex_home" "$claude_home" "$fake_bin"
   ln -s "$project_dir/tests/fake_ps.sh" "$fake_bin/ps"
   ln -s "$project_dir/tests/fake_claude.sh" "$fake_bin/claude"
+  ln -s "$project_dir/tests/fake_codex.sh" "$fake_bin/codex"
   export HOME="$fixture"
   export CODEX_HOME="$codex_home"
   export CLAUDE_CONFIG_DIR="$claude_home"
   export OMARCHY_AI_SWITCHER_DIR="$switcher_dir"
   export FAKE_CLAUDE_LOG="$fake_log"
+  export FAKE_CODEX_LOG="$fake_codex_log"
   export PATH="$fake_bin:$original_path"
   unset FAKE_PS_OUTPUT
 }
@@ -99,6 +102,11 @@ second_codex_home="$switcher_dir/homes/codex/$second_codex"
 check jq -e --arg id "$first_codex" '.active_account_id == $id and (.accounts | length == 2)' \
   "$switcher_dir/codex-accounts.json" >/dev/null
 check jq -e '.tokens.account_id == "account-two"' "$second_codex_home/auth.json" >/dev/null
+codex_usage=$(helper usage codex "$second_codex")
+check jq -e '.ok and .available and .provider == "codex" and
+  (.windows | map({key, used_percent}) == [
+    {key:"five_hour",used_percent:27},{key:"seven_day",used_percent:61}
+  ])' <<<"$codex_usage" >/dev/null
 
 # Selection never mutates the shared live login; isolated refreshes flow back to the private store.
 live_codex_hash=$(sha256sum "$codex_home/auth.json" | cut -d' ' -f1)
@@ -174,6 +182,11 @@ second_claude=$(jq -r '.accounts[] | select(.name == "Two").id' "$switcher_dir/c
 second_claude_home="$switcher_dir/homes/claude/$second_claude"
 check jq -e --arg id "$first_claude" '.active_account_id == $id and (.accounts | length == 2)' \
   "$switcher_dir/claude-accounts.json" >/dev/null
+claude_usage=$(helper usage claude "$second_claude")
+check jq -e '.ok and .available and .provider == "claude" and
+  (.windows | map({key, used_percent}) == [
+    {key:"five_hour",used_percent:34},{key:"seven_day",used_percent:72}
+  ])' <<<"$claude_usage" >/dev/null
 
 live_claude_hash=$(sha256sum "$claude_home/.credentials.json" | cut -d' ' -f1)
 helper switch claude "$second_claude" >/dev/null

@@ -3,11 +3,13 @@
 A native Omarchy Quattro bar plugin for saving and switching personal Codex CLI
 and Claude Code accounts.
 
-![AI Account Switcher panel showing two fictional Claude accounts](preview.png)
+![AI Account Switcher panel showing fictional Claude accounts with usage bars](preview.png)
 
 ## Features
 
 - Separate Codex and Claude account lists in one compact menubar panel.
+- Shows each saved account's remaining Codex or Claude plan capacity so the
+  account with the most headroom is easy to choose.
 - Uses the official `codex login` and `claude auth login` flows.
 - Gives every account a stable isolated `CODEX_HOME` or `CLAUDE_CONFIG_DIR`.
 - Opens the selected account in a new terminal without rewriting the shared
@@ -45,6 +47,11 @@ change any already-open session.
 an isolated temporary home; there is no pre-login confirmation prompt. After
 login, the plugin promotes it to a stable private account home. No operation
 requires closing active Codex or Claude sessions.
+
+Plan usage is fetched through the installed provider CLIs when the panel opens
+and cached in memory for five minutes. It is never added to the credential
+stores. Accounts whose plan does not expose limits remain selectable and show
+that plan usage was not reported.
 
 Press **Make plain codex and claude commands follow selection** once to install
 recoverable command routers in `~/.local/bin` plus a private mise shell-alias

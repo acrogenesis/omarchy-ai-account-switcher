@@ -22,7 +22,7 @@ Panel {
   property bool cursorActive: false
 
   function open() {
-    if (service) service.refresh()
+    if (service) service.refresh(true)
     cursorIndex = 0
     cursorActive = false
     controller.show()
@@ -46,6 +46,72 @@ Panel {
   function activateCursor() {
     if (!service || !cursorActive || cursorIndex >= service.accounts.length) return
     service.switchAccount(service.accounts[cursorIndex].id)
+  }
+
+  function usageSummary(usage) {
+    if (!usage || usage.loading === true) return "Checking plan usage…"
+    if (usage.available !== true || !Array.isArray(usage.windows) || usage.windows.length === 0)
+      return String(usage.reason || "Usage unavailable")
+    return usage.windows.map(function(window) {
+      var remaining = Math.max(0, Math.round(100 - Number(window.used_percent || 0)))
+      return String(window.label || "Limit").toUpperCase() + " " + remaining + "% left"
+    }).join(" · ")
+  }
+
+  function usageResetSummary(usage) {
+    if (!usage || !Array.isArray(usage.windows)) return ""
+    var nextReset = 0
+    var now = Date.now() / 1000
+    for (var i = 0; i < usage.windows.length; i++) {
+      var reset = Number(usage.windows[i].resets_at || 0)
+      if (reset > now && (nextReset === 0 || reset < nextReset)) nextReset = reset
+    }
+    return nextReset > 0
+      ? "Next reset " + Qt.formatDateTime(new Date(nextReset * 1000), "ddd h:mm AP") : ""
+  }
+
+  component UsageBar: Item {
+    id: usageBar
+    property var window: null
+    readonly property real remainingPercent: Math.max(0,
+      Math.min(100, 100 - Number(window ? window.used_percent || 0 : 0)))
+    readonly property color fillColor: remainingPercent <= 10 ? root.urgent : root.accent
+
+    implicitHeight: Style.space(20)
+
+    Rectangle {
+      id: usageTrack
+      anchors.fill: parent
+      radius: Style.cornerRadius
+      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
+    }
+
+    Rectangle {
+      anchors.left: usageTrack.left
+      anchors.top: usageTrack.top
+      anchors.bottom: usageTrack.bottom
+      width: usageTrack.width * usageBar.remainingPercent / 100
+      radius: usageTrack.radius
+      color: Qt.rgba(usageBar.fillColor.r, usageBar.fillColor.g, usageBar.fillColor.b, 0.72)
+
+      Behavior on width {
+        NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
+      }
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      anchors.fill: parent
+      text: String(usageBar.window ? usageBar.window.label || "Limit" : "Limit").toUpperCase()
+        + " · " + Math.round(usageBar.remainingPercent) + "% LEFT"
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+      elide: Text.ElideRight
+    }
   }
 
   KeyboardPanel {
@@ -344,6 +410,8 @@ Panel {
     id: accountRow
     property var account: null
     property int rowIndex: 0
+    readonly property var usage: account && root.service
+      ? root.service.usageFor(String(account.id || "")) : null
     readonly property bool currentAccount: account && account.is_active === true
     readonly property bool switching: account && root.service
       && root.service.switchingId === String(account.id || "")
@@ -352,6 +420,10 @@ Panel {
     current: currentAccount
     foreground: root.foreground
     accent: root.accent
+    // Account selection already has a persistent fill and checkmark. A second
+    // outlined row on hover makes both accounts look selected, so use only the
+    // shared hover fill here.
+    borderSpec: Border.none()
     implicitHeight: row.implicitHeight + Style.space(16)
 
     RowLayout {
@@ -402,6 +474,45 @@ Panel {
             if (accountRow.currentAccount) pieces.push("SELECTED")
             return pieces.join(" · ")
           }
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+
+        RowLayout {
+          visible: accountRow.usage && accountRow.usage.available === true
+          Layout.fillWidth: true
+          spacing: Style.space(6)
+
+          Repeater {
+            model: accountRow.usage && Array.isArray(accountRow.usage.windows)
+              ? accountRow.usage.windows : []
+
+            UsageBar {
+              required property var modelData
+              Layout.fillWidth: true
+              window: modelData
+            }
+          }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          visible: !accountRow.usage || accountRow.usage.available !== true
+          Layout.fillWidth: true
+          text: root.usageSummary(accountRow.usage)
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          visible: text !== ""
+          Layout.fillWidth: true
+          text: root.usageResetSummary(accountRow.usage)
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
