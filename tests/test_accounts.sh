@@ -19,16 +19,21 @@ reset_fixture() {
   switcher_dir="$fixture/switcher"
   codex_home="$fixture/codex"
   claude_home="$fixture/claude"
+  grok_home="$fixture/grok"
   fake_bin="$fixture/bin"
   fake_log="$fixture/claude.log"
-  mkdir -p "$codex_home" "$claude_home" "$fake_bin"
+  grok_fake_log="$fixture/grok.log"
+  mkdir -p "$codex_home" "$claude_home" "$grok_home" "$fake_bin"
   ln -s "$project_dir/tests/fake_ps.sh" "$fake_bin/ps"
   ln -s "$project_dir/tests/fake_claude.sh" "$fake_bin/claude"
+  ln -s "$project_dir/tests/fake_grok.sh" "$fake_bin/grok"
   export HOME="$fixture"
   export CODEX_HOME="$codex_home"
   export CLAUDE_CONFIG_DIR="$claude_home"
+  export GROK_HOME="$grok_home"
   export OMARCHY_AI_SWITCHER_DIR="$switcher_dir"
   export FAKE_CLAUDE_LOG="$fake_log"
+  export FAKE_GROK_LOG="$grok_fake_log"
   export PATH="$fake_bin:$original_path"
   unset FAKE_PS_OUTPUT
 }
@@ -65,6 +70,23 @@ write_claude() {
       organizationName: $org
     }
   }' >"$claude_home/.claude.json"
+}
+
+write_grok() {
+  local email=$1 principal=$2 suffix=$3 created=${4:-2026-01-01T00:00:00Z}
+  jq -n --arg email "$email" --arg principal "$principal" --arg suffix "$suffix" --arg created "$created" '{
+    "https://auth.x.ai::client-one": {
+      auth_mode: "oauth",
+      create_time: $created,
+      email: $email,
+      expires_at: "2036-01-01T00:00:00Z",
+      first_name: "Test",
+      key: ("key-" + $suffix),
+      oidc_client_id: "client-one",
+      oidc_issuer: "https://auth.x.ai",
+      principal_id: $principal
+    }
+  }' >"$grok_home/auth.json"
 }
 
 helper() { bash "$project_dir/ai_accounts.sh" "$@"; }
@@ -271,5 +293,65 @@ omarchy_id=$(jq -r '.accounts[] | select(.name == "Omarchy").id' "$switcher_dir/
 omarchy_home="$switcher_dir/homes/claude/$omarchy_id"
 check test ! -L "$omarchy_home/history.jsonl"
 check test ! -L "$omarchy_home/projects"
+
+# Grok: private stores, stable homes, dedupe by principal, and key rotation.
+reset_fixture grok-main
+write_grok one@example.com principal-one one
+helper import-current grok One >/dev/null
+first_grok=$(jq -r '.accounts[] | select(.name == "One").id' "$switcher_dir/grok-accounts.json")
+first_grok_home="$switcher_dir/homes/grok/$first_grok"
+check test "$(stat -c '%a' "$switcher_dir/grok-accounts.json")" = 600
+check test "$(stat -c '%a' "$first_grok_home")" = 700
+check test "$(stat -c '%a' "$first_grok_home/auth.json")" = 600
+check jq -e '.["https://auth.x.ai::client-one"].key == "key-one"' "$first_grok_home/auth.json" >/dev/null
+status=$(helper status)
+check jq -e '.providers.grok.accounts[0] |
+  .name == "One" and .is_active == true and .email == "one@example.com" and
+  has("auth_data") == false and has("principal_id") == false' <<<"$status" >/dev/null
+
+# A rotated key for the same principal updates the saved account in place.
+write_grok one@example.com principal-one rotated
+helper import-current grok >/dev/null
+check jq -e '.accounts | length == 1' "$switcher_dir/grok-accounts.json" >/dev/null
+check jq -e '.accounts[0].auth_data.entry.key == "key-rotated" and .accounts[0].name == "One"' \
+  "$switcher_dir/grok-accounts.json" >/dev/null
+
+# A second identity saves separately and materializes only its own entry.
+write_grok two@example.com principal-two two
+helper import-current grok Two --inactive >/dev/null
+second_grok=$(jq -r '.accounts[] | select(.name == "Two").id' "$switcher_dir/grok-accounts.json")
+second_grok_home="$switcher_dir/homes/grok/$second_grok"
+check jq -e --arg id "$first_grok" '.active_account_id == $id and (.accounts | length == 2)' \
+  "$switcher_dir/grok-accounts.json" >/dev/null
+check jq -e '.["https://auth.x.ai::client-one"].principal_id == "principal-two"' \
+  "$second_grok_home/auth.json" >/dev/null
+check jq -e 'length == 1' "$second_grok_home/auth.json" >/dev/null
+
+# Selection never mutates the shared live login; refreshes flow back to the store.
+live_grok_hash=$(sha256sum "$grok_home/auth.json" | cut -d' ' -f1)
+helper switch grok "$second_grok" >/dev/null
+jq '.["https://auth.x.ai::client-one"].key = "key-two-rotated"' "$second_grok_home/auth.json" \
+  >"$fixture/rotated.json"
+mv "$fixture/rotated.json" "$second_grok_home/auth.json"
+launch=$(helper prepare-launch grok "$second_grok")
+check jq -e --arg home "$second_grok_home" '.ok and .home == $home and .name == "Two"' <<<"$launch" >/dev/null
+check test "$(sha256sum "$grok_home/auth.json" | cut -d' ' -f1)" = "$live_grok_hash"
+check jq -e '.accounts[] | select(.name == "Two") | .auth_data.entry.key == "key-two-rotated"' \
+  "$switcher_dir/grok-accounts.json" >/dev/null
+
+# Newest of several signed-in identities wins as the current login.
+jq -n '{
+  "https://auth.x.ai::client-one": {auth_mode:"oauth", create_time:"2026-01-01T00:00:00Z",
+    email:"old@example.com", key:"key-old", principal_id:"principal-old"},
+  "https://auth.x.ai::client-two": {auth_mode:"oauth", create_time:"2026-02-01T00:00:00Z",
+    email:"new@example.com", key:"key-new", principal_id:"principal-new"}
+}' >"$grok_home/auth.json"
+helper import-current grok >/dev/null
+check jq -e '.accounts[] | select(.email == "new@example.com")' "$switcher_dir/grok-accounts.json" >/dev/null
+
+# Running sessions are counted from grok processes.
+export FAKE_PS_OUTPUT='202 pts/2 grok grok'
+check jq -e '.providers.grok.running_count == 1' <<<"$(helper status)" >/dev/null
+unset FAKE_PS_OUTPUT
 
 printf 'Account helper tests passed (%d checks)\n' "$checks"

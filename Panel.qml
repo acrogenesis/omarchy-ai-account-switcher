@@ -114,7 +114,8 @@ Panel {
             value: root.service ? root.service.provider : "codex"
             options: [
               { value: "codex", label: "Codex" },
-              { value: "claude", label: "Claude" }
+              { value: "claude", label: "Claude" },
+              { value: "grok", label: "Grok" }
             ]
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -280,7 +281,7 @@ Panel {
           Button {
             visible: root.service && !root.service.commandWrappersEnabled
             width: parent.width
-            text: "Make plain codex and claude commands follow selection"
+            text: "Make plain codex, claude, and grok commands follow selection"
             foreground: root.foreground
             fontFamily: root.fontFamily
             focusable: true
@@ -292,7 +293,7 @@ Panel {
             textFormat: Text.PlainText
             visible: root.service && root.service.commandWrappersEnabled
             width: parent.width
-            text: "New plain codex and claude processes also use the selected accounts."
+            text: "New plain codex, claude, and grok processes also use the selected accounts."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
