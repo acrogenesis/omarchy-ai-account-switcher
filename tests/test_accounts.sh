@@ -272,4 +272,31 @@ omarchy_home="$switcher_dir/homes/claude/$omarchy_id"
 check test ! -L "$omarchy_home/history.jsonl"
 check test ! -L "$omarchy_home/projects"
 
+# Distrobox-marked accounts: the box persists, surfaces in status and
+# prepare-launch, survives re-imports, and clears cleanly.
+reset_fixture distrobox-main
+write_codex_chatgpt account-box box
+helper import-current codex Boxed --distrobox=devbox >/dev/null
+boxed_id=$(jq -r '.accounts[] | select(.name == "Boxed").id' "$switcher_dir/codex-accounts.json")
+check jq -e '.accounts[0].distrobox == "devbox"' "$switcher_dir/codex-accounts.json" >/dev/null
+check jq -e '.providers.codex.accounts[0] |
+  .distrobox == "devbox" and has("auth_data") == false' <<<"$(helper status)" >/dev/null
+check jq -e '.distrobox == "devbox"' <<<"$(helper prepare-launch codex "$boxed_id")" >/dev/null
+
+# A re-import without the flag keeps the saved box; the flag can move or clear it.
+write_codex_chatgpt account-box box-rotated
+helper import-current codex >/dev/null
+check jq -e '.accounts[0].distrobox == "devbox"' "$switcher_dir/codex-accounts.json" >/dev/null
+helper set-distrobox codex "$boxed_id" otherbox >/dev/null
+check jq -e '.accounts[0].distrobox == "otherbox"' "$switcher_dir/codex-accounts.json" >/dev/null
+helper set-distrobox codex "$boxed_id" >/dev/null
+check jq -e '.accounts[0].distrobox == null' "$switcher_dir/codex-accounts.json" >/dev/null
+check jq -e '.distrobox == null' <<<"$(helper prepare-launch codex "$boxed_id")" >/dev/null
+
+# Hostile box names are refused.
+if helper set-distrobox codex "$boxed_id" 'bad;name' >/dev/null 2>&1; then
+  echo "Expected an invalid distrobox name to be refused" >&2
+  exit 1
+fi
+
 printf 'Account helper tests passed (%d checks)\n' "$checks"

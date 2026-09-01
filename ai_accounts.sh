@@ -38,6 +38,10 @@ validate_account_id() {
   [[ $1 =~ ^[A-Za-z0-9_-]+$ ]] || fail "Invalid account id"
 }
 
+validate_distrobox_name() {
+  [[ $1 =~ ^[A-Za-z0-9._-]*$ ]] || fail "Invalid distrobox name"
+}
+
 account_home() {
   local provider=$1 account_id=$2
   validate_account_id "$account_id"
@@ -386,6 +390,7 @@ provider_status() {
         ok: true, provider: "codex",
         accounts: [.accounts[] | {
           id: (.id | tostring), name: (.name // "Account"), email, plan_type, auth_mode,
+          distrobox: (.distrobox // null),
           is_active: (.id == $active), is_current: (.id == $current), last_used_at
         }],
         active_account_id: (if $active == "" then null else $active end),
@@ -399,6 +404,7 @@ provider_status() {
         ok: true, provider: "claude",
         accounts: [.accounts[] | {
           id: (.id | tostring), name: (.name // "Account"), email, org_name, subscription_type,
+          distrobox: (.distrobox // null),
           is_active: (.id == $active), is_current: (.id == $current), last_used_at
         }],
         active_account_id: (if $active == "" then null else $active end),
@@ -430,14 +436,20 @@ combined_status() {
 }
 
 import_current() {
-  local provider=$1 name=$2 activate=$3 store_path candidate index saved_id saved_name
-  local previous_active existing_id existing_name existing_created existing_last
+  local provider=$1 name=$2 activate=$3 distrobox=${4:--} store_path candidate index saved_id saved_name
+  local previous_active existing_id existing_name existing_created existing_last existing_distrobox
   store_path=$(provider_store "$provider")
   lock_store
   load_store "$store_path"
   previous_active=$(printf '%s' "$STORE_JSON" | jq -r '.active_account_id // empty')
   candidate=$(provider_current_account "$provider" true)
   if [[ $candidate == null ]]; then fail "No ${provider^} login is available to save"; fi
+  # "-" means the flag was not given: keep whatever the saved account had.
+  if [[ $distrobox != - ]]; then
+    validate_distrobox_name "$distrobox"
+    candidate=$(printf '%s' "$candidate" | jq -c --arg box "$distrobox" \
+      '.distrobox=(if $box == "" then null else $box end)')
+  fi
   index=$(provider_match_index "$provider" "$candidate")
 
   if (( index >= 0 )); then
@@ -445,11 +457,14 @@ import_current() {
     existing_name=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].name // empty')
     existing_created=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].created_at // empty')
     existing_last=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].last_used_at // null')
+    existing_distrobox=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].distrobox // null')
     saved_name=${name:-$existing_name}
     saved_name=${saved_name:-$(printf '%s' "$candidate" | jq -r '.name')}
     candidate=$(printf '%s' "$candidate" | jq -c \
       --arg id "$existing_id" --arg name "$saved_name" --arg created "$existing_created" \
-      --argjson last "$existing_last" '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last')
+      --argjson last "$existing_last" --argjson box "$existing_distrobox" --arg flag "$distrobox" \
+      '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last
+       | (if $flag == "-" then .distrobox=$box else . end)')
     STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" \
       --slurpfile candidate <(printf '%s\n' "$candidate") '.accounts[$index]=$candidate[0]')
   else
@@ -680,7 +695,7 @@ materialize_account_home() {
 }
 
 sync_account_home_into_store() {
-  local provider=$1 account_id=$2 home current index existing_name existing_created existing_last
+  local provider=$1 account_id=$2 home current index existing_name existing_created existing_last existing_distrobox
   home=$(account_home "$provider" "$account_id")
   if [[ $provider == codex ]]; then
     [[ -f $home/auth.json && ! -L $home/auth.json ]] || return 0
@@ -696,9 +711,11 @@ sync_account_home_into_store() {
   existing_name=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].name')
   existing_created=$(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].created_at')
   existing_last=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].last_used_at // null')
+  existing_distrobox=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" '.accounts[$index].distrobox // null')
   current=$(printf '%s' "$current" | jq -c \
     --arg id "$account_id" --arg name "$existing_name" --arg created "$existing_created" \
-    --argjson last "$existing_last" '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last')
+    --argjson last "$existing_last" --argjson box "$existing_distrobox" \
+    '.id=$id | .name=$name | .created_at=$created | .last_used_at=$last | .distrobox=$box')
   STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --argjson index "$index" \
     --slurpfile current <(printf '%s\n' "$current") '.accounts[$index]=$current[0]')
 }
@@ -736,8 +753,31 @@ prepare_launch() {
     .active_account_id=$id | .accounts |= map(if .id == $id then .last_used_at=$now else . end)')
   atomic_private_write "$store_path" "$STORE_JSON"
   name=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" '.accounts[] | select(.id == $id) | .name')
+  local distrobox
+  distrobox=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" \
+    '.accounts[] | select(.id == $id) | .distrobox // empty')
   jq -cn --arg provider "$provider" --arg id "$account_id" --arg name "$name" --arg home "$home" \
-    '{ok: true, provider: $provider, account_id: $id, name: $name, home: $home}'
+    --arg distrobox "$distrobox" \
+    '{ok: true, provider: $provider, account_id: $id, name: $name, home: $home,
+      distrobox: (if $distrobox == "" then null else $distrobox end)}'
+}
+
+set_distrobox() {
+  local provider=$1 account_id=$2 box=$3 store_path count
+  validate_distrobox_name "$box"
+  store_path=$(provider_store "$provider")
+  lock_store
+  load_store "$store_path"
+  count=$(printf '%s' "$STORE_JSON" | jq -r --arg id "$account_id" '[.accounts[] | select(.id == $id)] | length')
+  (( count > 0 )) || fail "Account not found"
+  STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" --arg box "$box" \
+    '.accounts |= map(if .id == $id then .distrobox=(if $box == "" then null else $box end) else . end)')
+  atomic_private_write "$store_path" "$STORE_JSON"
+  if [[ -n $box ]]; then
+    jq -cn --arg message "New sessions for this account open inside distrobox $box" '{ok: true, message: $message}'
+  else
+    jq -cn '{ok: true, message: "New sessions for this account open on the host"}'
+  fi
 }
 
 rename_account() {
@@ -772,7 +812,7 @@ remove_account() {
 }
 
 usage() {
-  printf 'Usage: %s status | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
+  printf 'Usage: %s status | import-current PROVIDER [NAME] [--inactive] [--distrobox=BOX] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID | set-distrobox PROVIDER ID BOX\n' "$0" >&2
   exit 2
 }
 
@@ -785,16 +825,17 @@ main() {
       ;;
     import-current)
       [[ $# -ge 2 ]] || usage
-      local provider=$2 name='' activate=true argument
+      local provider=$2 name='' activate=true distrobox=- argument
       shift 2
       for argument in "$@"; do
         if [[ $argument == --inactive ]]; then activate=false
+        elif [[ $argument == --distrobox=* ]]; then distrobox=${argument#--distrobox=}
         elif [[ -z $name ]]; then name=$argument
         else usage
         fi
       done
       [[ $provider == codex || $provider == claude ]] || fail "Unknown provider: $provider"
-      import_current "$provider" "$name" "$activate"
+      import_current "$provider" "$name" "$activate" "$distrobox"
       ;;
     switch)
       [[ $# == 3 ]] || usage
@@ -812,6 +853,10 @@ main() {
     remove)
       [[ $# == 3 ]] || usage
       remove_account "$2" "$3"
+      ;;
+    set-distrobox)
+      [[ $# == 3 || $# == 4 ]] || usage
+      set_distrobox "$2" "$3" "${4:-}"
       ;;
     *) usage ;;
   esac

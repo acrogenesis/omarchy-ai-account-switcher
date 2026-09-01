@@ -399,6 +399,7 @@ Panel {
             if (accountRow.account.subscription_type)
               pieces.push(String(accountRow.account.subscription_type).toUpperCase())
             if (accountRow.account.org_name) pieces.push(String(accountRow.account.org_name))
+            if (accountRow.account.distrobox) pieces.push("IN " + String(accountRow.account.distrobox).toUpperCase())
             if (accountRow.currentAccount) pieces.push("SELECTED")
             return pieces.join(" · ")
           }
