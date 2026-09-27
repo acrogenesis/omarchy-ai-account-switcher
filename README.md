@@ -61,6 +61,25 @@ selection from any terminal. Processes already running—and new conversations
 created inside one of those existing processes—keep the account that process
 started with.
 
+### Routed command permissions
+
+Starting with v0.5.0, installed command routers default to **full permission
+bypass**: Codex runs with `--dangerously-bypass-approvals-and-sandbox` and
+Claude with `--dangerously-skip-permissions`. These sessions can execute
+commands without approval; Codex also runs without its sandbox. Omarchy's
+`--approve-for-me` and Claude `--permission-mode auto` launches use this bypass
+mode too.
+
+To choose another mode explicitly, pass Codex `--sandbox` and/or
+`--ask-for-approval`, or Claude `--permission-mode plan`, `default`, or another
+provider-supported mode. Arguments after `--` are passed through unchanged.
+Existing router installations need to be refreshed using **Make plain codex
+and claude commands follow selection** in the panel, or:
+
+```bash
+bash ~/.config/omarchy/plugins/acrogenesis.ai-account-switcher/InstallCommandWrappers.sh install
+```
+
 ## Local data
 
 Saved credentials are kept outside the plugin checkout:

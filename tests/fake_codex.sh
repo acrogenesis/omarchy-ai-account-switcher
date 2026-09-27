@@ -4,6 +4,13 @@ set -euo pipefail
 
 printf '%s\n' "$*" >>"$FAKE_CODEX_LOG"
 
+if [[ ${FAKE_CODEX_CAPTURE_ARGV:-0} == 1 ]]; then
+  jq -cn --args '$ARGS.positional' -- "$@"
+  exit 0
+fi
+
+if [[ ${1:-} == --dangerously-bypass-approvals-and-sandbox ]]; then shift; fi
+
 if [[ ${1:-} == "login" ]]; then
   mkdir -p "$CODEX_HOME"
   cp "$FAKE_CODEX_AUTH" "$CODEX_HOME/auth.json"

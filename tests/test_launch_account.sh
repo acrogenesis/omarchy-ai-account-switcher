@@ -86,11 +86,13 @@ env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
   jq -e '.command_wrappers_enabled == true' >/dev/null
 
 plain_codex=$(env "${router_env[@]}" "$wrapper_bin/codex")
+[[ $(tail -n 1 "$test_dir/codex.log") == --dangerously-bypass-approvals-and-sandbox ]]
 jq -e --arg home "$codex_home" '
   select(.launched == true and .home == $home and .account_id == "codex-one")
 ' <<<"$plain_codex" >/dev/null
 
 plain_claude=$(env "${router_env[@]}" "$wrapper_bin/claude")
+[[ $(tail -n 1 "$test_dir/claude.log") == --dangerously-skip-permissions ]]
 jq -e --arg home "$claude_home" '
   select(.launched == true and .home == $home and .email == "one@example.com")
 ' <<<"$plain_claude" >/dev/null
@@ -98,6 +100,49 @@ jq -e --arg home "$claude_home" '
 explicit_claude=$(env "${router_env[@]}" CLAUDE_CONFIG_DIR="$live_claude" "$wrapper_bin/claude")
 jq -e --arg home "$live_claude" 'select(.launched == true and .home == $home)' \
   <<<"$explicit_claude" >/dev/null
+
+explicit_codex=$(env "${router_env[@]}" CODEX_HOME="$live_codex" "$wrapper_bin/codex")
+jq -e --arg home "$live_codex" 'select(.launched == true and .home == $home)' \
+  <<<"$explicit_codex" >/dev/null
+
+# Capture real argv boundaries, including literal prompts and explicit modes.
+assert_args() {
+  local provider=$1 expected=$2 actual
+  shift 2
+  actual=$(env "${router_env[@]}" FAKE_CODEX_CAPTURE_ARGV=1 FAKE_CLAUDE_CAPTURE_ARGV=1 \
+    "$wrapper_bin/$provider" "$@")
+  if ! jq -e --argjson expected "$expected" '. == $expected' <<<"$actual" >/dev/null; then
+    printf 'Unexpected %s arguments: %s\n' "$provider" "$actual" >&2
+    exit 1
+  fi
+}
+
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","resume","--last"]' \
+  --approve-for-me resume --last
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","--no-daemon"]' \
+  --dangerously-bypass-approvals-and-sandbox --no-daemon
+assert_args codex '["--sandbox","read-only","--ask-for-approval","on-request"]' \
+  --sandbox read-only --ask-for-approval on-request
+assert_args codex '["--sandbox=read-only","--ask-for-approval=on-request"]' \
+  --sandbox=read-only --ask-for-approval=on-request
+assert_args codex '["-s","workspace-write","-a","never"]' -s workspace-write -a never
+assert_args codex '["-sread-only","-aon-request"]' -sread-only -aon-request
+assert_args codex '["--sandbox","read-only"]' --approve-for-me --sandbox read-only
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","--","--approve-for-me"]' \
+  -- --approve-for-me
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","exec","prompt with spaces\nand a newline"]' \
+  exec $'prompt with spaces\nand a newline'
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","login"]' login
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox","app-server","--stdio"]' app-server --stdio
+assert_args claude '["--permission-mode","bypassPermissions","resume this"]' \
+  --permission-mode auto 'resume this'
+assert_args claude '["--permission-mode=bypassPermissions"]' --permission-mode=auto
+assert_args claude '["--permission-mode","plan"]' --permission-mode plan
+assert_args claude '["--permission-mode=default"]' --permission-mode=default
+assert_args claude '["--dangerously-skip-permissions","--resume"]' --dangerously-skip-permissions --resume
+assert_args claude '["--dangerously-skip-permissions","--","--permission-mode=auto"]' \
+  -- --permission-mode=auto
+assert_args claude '["--dangerously-skip-permissions","auth","login"]' auth login
 
 env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" remove >/dev/null
 [[ ! -e $wrapper_bin/codex ]]

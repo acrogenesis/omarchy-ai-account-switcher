@@ -4,6 +4,13 @@ set -euo pipefail
 
 printf '%s\n' "$*" >>"$FAKE_CLAUDE_LOG"
 
+if [[ ${FAKE_CLAUDE_CAPTURE_ARGV:-0} == 1 ]]; then
+  jq -cn --args '$ARGS.positional' -- "$@"
+  exit 0
+fi
+
+if [[ ${1:-} == --dangerously-skip-permissions ]]; then shift; fi
+
 if [[ ${1:-} == "auth" && ${2:-} == "login" ]]; then
   mkdir -p "$CLAUDE_CONFIG_DIR"
   cp "$FAKE_CLAUDE_CREDENTIALS" "$CLAUDE_CONFIG_DIR/.credentials.json"
