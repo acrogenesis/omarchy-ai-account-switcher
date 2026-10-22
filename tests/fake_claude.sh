@@ -12,6 +12,7 @@ fi
 if [[ ${1:-} == --dangerously-skip-permissions ]]; then shift; fi
 
 if [[ ${1:-} == "auth" && ${2:-} == "login" ]]; then
+  if [[ ${FAKE_LOGIN_FAIL:-0} == 1 ]]; then exit 1; fi
   mkdir -p "$CLAUDE_CONFIG_DIR"
   cp "$FAKE_CLAUDE_CREDENTIALS" "$CLAUDE_CONFIG_DIR/.credentials.json"
   cp "$FAKE_CLAUDE_STATE" "$CLAUDE_CONFIG_DIR/.claude.json"

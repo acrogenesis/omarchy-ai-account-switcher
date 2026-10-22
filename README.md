@@ -48,6 +48,12 @@ an isolated temporary home; there is no pre-login confirmation prompt. After
 login, the plugin promotes it to a stable private account home. No operation
 requires closing active Codex or Claude sessions.
 
+To renew an expired login, select the saved account and press **Sign in again**
+below the account list. Complete the official login in the opened terminal
+using that same account. Its saved name, selection, and history stay in place.
+Canceling or choosing a different identity leaves the saved login unchanged.
+Codex API-key accounts instead prompt for a replacement key without displaying it.
+
 Plan usage is fetched through the installed provider CLIs when the panel opens
 and cached in memory for five minutes. It is never added to the credential
 stores. Accounts whose plan does not expose limits remain selectable and show
@@ -63,21 +69,46 @@ started with.
 
 ### Routed command permissions
 
-Starting with v0.5.0, installed command routers default to **full permission
-bypass**: Codex runs with `--dangerously-bypass-approvals-and-sandbox` and
-Claude with `--dangerously-skip-permissions`. These sessions can execute
-commands without approval; Codex also runs without its sandbox. Omarchy's
-`--approve-for-me` and Claude `--permission-mode auto` launches use this bypass
-mode too.
+Account routing **preserves provider permission settings and every command
+argument by default**, including Codex `--approve-for-me` and Claude
+`--permission-mode auto`. Installing or updating routing never enables
+permission bypass. Existing provider configuration still applies.
 
-To choose another mode explicitly, pass Codex `--sandbox` and/or
-`--ask-for-approval`, or Claude `--permission-mode plan`, `default`, or another
-provider-supported mode. Arguments after `--` are passed through unchanged.
-Existing router installations need to be refreshed using **Make plain codex
-and claude commands follow selection** in the panel, or:
+The panel offers a separate **Configure permission bypass…** action. It shows
+the consequences before the explicit **Enable permission bypass for both
+providers** confirmation: Codex runs without approvals or sandboxing, and
+Claude skips permission prompts. This preference applies to new commands
+through either router, including launches with an explicit provider home.
+Running sessions are unchanged. **Turn permission bypass off** restores
+argument passthrough for new commands immediately.
+
+Only with this opt-in do routers add Codex
+`--dangerously-bypass-approvals-and-sandbox` or Claude
+`--dangerously-skip-permissions`, replace Codex `--approve-for-me`, and map
+Claude `--permission-mode auto` to `bypassPermissions`. Explicit Codex
+`--sandbox`/`--ask-for-approval` and other Claude permission modes take
+precedence. Arguments after `--` stay unchanged.
+
+Older routers, including v0.5.0, bypassed permissions without this separate
+opt-in. The panel detects outdated copies and offers **Update terminal
+command routing**. Updating restores argument passthrough unless you have
+explicitly enabled the new preference; an old installation is never treated
+as consent. The equivalent update command is:
 
 ```bash
 bash ~/.config/omarchy/plugins/acrogenesis.ai-account-switcher/InstallCommandWrappers.sh install
+```
+
+The preference is stored privately in `command-permissions.json` next to the
+account stores. Missing, malformed, or symlinked preference files leave bypass
+off. Terminal configuration is also available through the installer:
+
+```bash
+# Explicit opt-in: disables Codex approvals/sandboxing and Claude permission prompts.
+bash ~/.config/omarchy/plugins/acrogenesis.ai-account-switcher/InstallCommandWrappers.sh enable-permission-bypass --accept-disabling-approvals-and-sandbox
+
+# Preserve provider arguments again.
+bash ~/.config/omarchy/plugins/acrogenesis.ai-account-switcher/InstallCommandWrappers.sh disable-permission-bypass
 ```
 
 ## Local data
@@ -165,6 +196,7 @@ omarchy-shell acrogenesis.ai-account-switcher selectProvider claude
 omarchy-shell acrogenesis.ai-account-switcher saveCurrent codex "Personal"
 omarchy-shell acrogenesis.ai-account-switcher switchAccount claude ACCOUNT_ID
 omarchy-shell acrogenesis.ai-account-switcher launchSelected claude
+omarchy-shell acrogenesis.ai-account-switcher signInAgain claude ACCOUNT_ID
 omarchy-shell acrogenesis.ai-account-switcher enableCommandSwitching
 ```
 
@@ -177,7 +209,8 @@ bash tests/test_accounts.sh
 bash tests/test_add_codex_account.sh
 bash tests/test_add_claude_account.sh
 bash tests/test_launch_account.sh
-bash -n ai_accounts.sh AddCodexAccount.sh AddClaudeAccount.sh LaunchAccount.sh CommandWrapper.sh InstallCommandWrappers.sh tests/*.sh
+bash tests/test_reauthenticate_account.sh
+for script in ./*.sh tests/*.sh; do bash -n "$script" || break; done
 omarchy plugin validate .
 ```
 

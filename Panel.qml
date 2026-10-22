@@ -20,15 +20,20 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   property int cursorIndex: 0
   property bool cursorActive: false
+  property bool confirmingPermissionBypass: false
 
   function open() {
     if (service) service.refresh(true)
     cursorIndex = 0
     cursorActive = false
+    confirmingPermissionBypass = false
     controller.show()
   }
 
-  function close() { controller.hide() }
+  function close() {
+    confirmingPermissionBypass = false
+    controller.hide()
+  }
   function toggle() { opened ? close() : open() }
 
   function switchPanel(direction) {
@@ -275,6 +280,20 @@ Panel {
             }
           }
 
+          Button {
+            visible: root.service && root.service.activeAccountId !== ""
+            width: parent.width
+            text: "Sign in again"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            focusable: true
+            enabled: root.service && !root.service.busy && !root.service.reauthenticating
+            onClicked: {
+              root.service.reauthenticateAccount(root.service.activeAccountId)
+              root.close()
+            }
+          }
+
           PanelSeparator { width: parent.width; foreground: root.foreground }
 
           PanelSectionHeader {
@@ -344,9 +363,11 @@ Panel {
           }
 
           Button {
-            visible: root.service && !root.service.commandWrappersEnabled
+            visible: root.service && !root.service.commandWrappersCurrent
             width: parent.width
-            text: "Make plain codex and claude commands follow selection"
+            text: root.service && root.service.commandWrappersOutdated
+              ? "Update terminal command routing"
+              : "Make plain codex and claude commands follow selection"
             foreground: root.foreground
             fontFamily: root.fontFamily
             focusable: true
@@ -356,14 +377,84 @@ Panel {
 
           Text {
             textFormat: Text.PlainText
-            visible: root.service && root.service.commandWrappersEnabled
             width: parent.width
-            text: "New plain codex and claude processes also use the selected accounts."
+            text: root.service && root.service.commandWrappersOutdated
+              ? "Older routers are installed and may bypass provider protections. Update them to preserve provider permissions by default and make bypass an explicit choice."
+              : "Account routing preserves provider permission settings and arguments unless you separately enable permission bypass."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
+          }
+
+          Column {
+            visible: root.service && root.service.commandWrappersCurrent
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              text: root.service && root.service.permissionBypassEnabled
+                ? "Permission bypass is ON for new routed Codex and Claude commands. Codex approvals and sandboxing are disabled; Claude permission prompts are skipped."
+                : "Permission bypass is OFF. Provider settings and command arguments are preserved."
+              color: root.service && root.service.permissionBypassEnabled ? root.urgent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
+
+            Button {
+              visible: !root.confirmingPermissionBypass
+              width: parent.width
+              text: root.service && root.service.permissionBypassEnabled
+                ? "Turn permission bypass off" : "Configure permission bypass…"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              focusable: true
+              enabled: root.service && !root.service.busy
+              onClicked: {
+                if (root.service.permissionBypassEnabled) root.service.setPermissionBypass(false)
+                else root.confirmingPermissionBypass = true
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.confirmingPermissionBypass
+              width: parent.width
+              text: "Enable bypass for all new routed Codex and Claude commands? Codex can run commands without approval or sandboxing; Claude skips permission prompts. This also replaces automatic-review mode in Omarchy launches. Other explicit permission modes still take precedence. Running sessions are unchanged."
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Button {
+              visible: root.confirmingPermissionBypass
+              width: parent.width
+              text: "Enable permission bypass for both providers"
+              foreground: root.urgent
+              fontFamily: root.fontFamily
+              focusable: true
+              enabled: root.service && !root.service.busy
+              onClicked: {
+                root.confirmingPermissionBypass = false
+                root.service.setPermissionBypass(true)
+              }
+            }
+
+            Button {
+              visible: root.confirmingPermissionBypass
+              width: parent.width
+              text: "Cancel"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              focusable: true
+              onClicked: root.confirmingPermissionBypass = false
+            }
           }
 
           Button {

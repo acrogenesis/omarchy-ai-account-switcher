@@ -79,12 +79,21 @@ BarWidget {
       root.accountService.enableCommandSwitching()
       return "started"
     }
+    function signInAgain(provider: string, accountId: string): string {
+      if (!root.ready) return "service unavailable"
+      if (provider !== "codex" && provider !== "claude") return "unknown provider"
+      root.accountService.selectProvider(provider)
+      return root.accountService.reauthenticateAccount(accountId)
+    }
     function status(): string {
       if (!root.ready) return "service unavailable"
       return "provider=" + root.accountService.provider
         + " active=\"" + root.accountService.activeName + "\""
         + " accounts=" + root.accountService.accounts.length
         + " canSwitch=" + root.accountService.canSwitch
+        + " routersCurrent=" + root.accountService.commandWrappersCurrent
+        + " routersOutdated=" + root.accountService.commandWrappersOutdated
+        + " permissionBypass=" + root.accountService.permissionBypassEnabled
         + (root.accountService.lastError
           ? " error=\"" + root.accountService.lastError + "\"" : "")
     }

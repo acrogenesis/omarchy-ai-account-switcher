@@ -12,6 +12,7 @@ mise_marker='omarchy-ai-account-switcher mise aliases v1'
 mise_conf_dir="${OMARCHY_AI_SWITCHER_MISE_CONF_DIR:-${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}/conf.d}"
 mise_fragment="$mise_conf_dir/omarchy-ai-account-switcher.toml"
 mise_backup="$backup_dir/mise-conf-fragment.toml"
+permissions_file="$config_dir/command-permissions.json"
 
 fail() {
   jq -cn --arg error "$1" '{ok: false, error: $error}'
@@ -111,21 +112,64 @@ remove_wrapper() {
   fi
 }
 
+write_permission_preference() {
+  local temporary
+  [[ ! -L $permissions_file && ( ! -e $permissions_file || -f $permissions_file ) ]] ||
+    fail "Refusing unsafe permission preference: $permissions_file"
+  temporary=$(mktemp "$config_dir/.command-permissions.XXXXXX")
+  chmod 600 -- "$temporary"
+  jq -cn --argjson bypass "$1" '{version: 1, bypass: $bypass}' >"$temporary"
+  mv -fT -- "$temporary" "$permissions_file"
+}
+
+action=${1:-install}
+case $action in
+  install|remove|disable-permission-bypass)
+    (($# <= 1)) || fail "Unexpected command arguments"
+    ;;
+  enable-permission-bypass)
+    [[ $# == 2 && $2 == --accept-disabling-approvals-and-sandbox ]] ||
+      fail "Permission bypass disables Codex approvals and sandboxing, skips Claude permission prompts, and replaces automatic-review mode. To opt in, use enable-permission-bypass --accept-disabling-approvals-and-sandbox"
+    ;;
+  *) fail "Usage: InstallCommandWrappers.sh [install|remove|disable-permission-bypass|enable-permission-bypass --accept-disabling-approvals-and-sandbox]" ;;
+esac
+
 [[ -f $wrapper_source && ! -L $wrapper_source ]] || fail "Command wrapper source is unavailable"
 ensure_directory "$config_dir" 700
 ensure_directory "$backup_dir" 700
 ensure_directory "$bin_dir" 755
 ensure_directory "$mise_conf_dir" 700
 
-case ${1:-install} in
-  install)
+[[ ! -L $config_dir/.wrappers.lock ]] || fail "Refusing symlinked wrapper lock"
+exec 8>"$config_dir/.wrappers.lock"
+chmod 600 -- "$config_dir/.wrappers.lock"
+flock -x 8
+
+case $action in
+  install|enable-permission-bypass|disable-permission-bypass)
+    if [[ $action != install ]]; then
+      [[ ! -L $permissions_file && ( ! -e $permissions_file || -f $permissions_file ) ]] ||
+        fail "Refusing unsafe permission preference: $permissions_file"
+    fi
     preflight_install codex
     preflight_install claude
     preflight_mise_fragment
     install_wrapper codex
     install_wrapper claude
     install_mise_fragment
-    jq -cn '{ok: true, message: "Terminal commands now follow the selected accounts"}'
+    case $action in
+      enable-permission-bypass)
+        write_permission_preference true
+        jq -cn '{ok: true, message: "Permission bypass enabled for new routed commands"}'
+        ;;
+      disable-permission-bypass)
+        write_permission_preference false
+        jq -cn '{ok: true, message: "Provider permission settings and arguments are now preserved"}'
+        ;;
+      install)
+        jq -cn '{ok: true, message: "Terminal command routing updated; permission preference unchanged"}'
+        ;;
+    esac
     ;;
   remove)
     remove_mise_fragment
@@ -133,5 +177,4 @@ case ${1:-install} in
     remove_wrapper claude
     jq -cn '{ok: true, message: "Restored the previous terminal commands"}'
     ;;
-  *) fail "Usage: InstallCommandWrappers.sh [install|remove]" ;;
 esac

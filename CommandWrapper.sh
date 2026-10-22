@@ -1,5 +1,5 @@
 #!/bin/bash
-# omarchy-ai-account-switcher command router v1 + yolo flags
+# omarchy-ai-account-switcher command router v1
 
 set -euo pipefail
 
@@ -29,31 +29,43 @@ if ! real_command=$(find_real_command); then
   exit 127
 fi
 
-# Default routed sessions to full permission bypass, including launches using
-# Omarchy's automatic-review flags. Explicit permission modes take precedence.
-yolo_argv=()
-if [[ $provider == claude ]]; then
+# Installing account routing never opts in to permission bypass. Missing,
+# malformed, or symlinked preferences preserve every provider argument.
+config_dir="${OMARCHY_AI_SWITCHER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/ai-account-switcher}"
+permissions_file="$config_dir/command-permissions.json"
+bypass=false
+if [[ ! -L $config_dir && -f $permissions_file && ! -L $permissions_file ]] &&
+  jq -es 'length == 1 and (.[0] | .version == 1 and .bypass == true)' "$permissions_file" >/dev/null 2>&1; then
+  bypass=true
+fi
+
+# Only the separate, explicitly acknowledged opt-in changes automatic-review
+# launches to bypass mode. Other explicit permission modes take precedence.
+routed_argv=()
+if [[ $bypass != true ]]; then
+  routed_argv=("$@")
+elif [[ $provider == claude ]]; then
   has_skip=0
   has_mode=0
   while (($#)); do
     case "$1" in
       --)
-        yolo_argv+=("$@")
+        routed_argv+=("$@")
         break
         ;;
       --dangerously-skip-permissions)
         has_skip=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
       --permission-mode)
         has_mode=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         if (($# >= 2)) && [[ $2 == auto ]]; then
-          yolo_argv+=(bypassPermissions)
+          routed_argv+=(bypassPermissions)
           shift 2
         elif (($# >= 2)); then
-          yolo_argv+=("$2")
+          routed_argv+=("$2")
           shift 2
         else
           shift
@@ -61,22 +73,22 @@ if [[ $provider == claude ]]; then
         ;;
       --permission-mode=auto)
         has_mode=1
-        yolo_argv+=(--permission-mode=bypassPermissions)
+        routed_argv+=(--permission-mode=bypassPermissions)
         shift
         ;;
       --permission-mode=*)
         has_mode=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
       *)
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
     esac
   done
   if (( has_skip == 0 && has_mode == 0 )); then
-    yolo_argv=(--dangerously-skip-permissions "${yolo_argv[@]}")
+    routed_argv=(--dangerously-skip-permissions "${routed_argv[@]}")
   fi
 elif [[ $provider == codex ]]; then
   has_bypass=0
@@ -84,12 +96,12 @@ elif [[ $provider == codex ]]; then
   while (($#)); do
     case "$1" in
       --)
-        yolo_argv+=("$@")
+        routed_argv+=("$@")
         break
         ;;
       --dangerously-bypass-approvals-and-sandbox)
         has_bypass=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
       --approve-for-me)
@@ -97,36 +109,36 @@ elif [[ $provider == codex ]]; then
         ;;
       -s|--sandbox|-a|--ask-for-approval)
         has_mode=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         if (($#)); then
-          yolo_argv+=("$1")
+          routed_argv+=("$1")
           shift
         fi
         ;;
       --sandbox=*|--ask-for-approval=*|-s?*|-a?*)
         has_mode=1
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
       *)
-        yolo_argv+=("$1")
+        routed_argv+=("$1")
         shift
         ;;
     esac
   done
   if (( has_bypass == 0 && has_mode == 0 )); then
-    yolo_argv=(--dangerously-bypass-approvals-and-sandbox "${yolo_argv[@]}")
+    routed_argv=(--dangerously-bypass-approvals-and-sandbox "${routed_argv[@]}")
   fi
 else
-  yolo_argv=("$@")
+  routed_argv=("$@")
 fi
 
 # An explicit provider home always wins. This keeps nested sessions and the
 # isolated add-account login flow pinned to the home they started with.
 if [[ $provider == codex && -n ${CODEX_HOME:-} ]] ||
   [[ $provider == claude && -n ${CLAUDE_CONFIG_DIR:-} ]]; then
-  exec "$real_command" "${yolo_argv[@]}"
+  exec "$real_command" "${routed_argv[@]}"
 fi
 
 plugin_dir="${OMARCHY_AI_SWITCHER_PLUGIN_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/acrogenesis.ai-account-switcher}"
@@ -144,4 +156,4 @@ if [[ -x $helper ]]; then
   fi
 fi
 
-exec "$real_command" "${yolo_argv[@]}"
+exec "$real_command" "${routed_argv[@]}"

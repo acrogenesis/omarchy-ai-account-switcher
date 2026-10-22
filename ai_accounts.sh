@@ -410,6 +410,9 @@ provider_status() {
 
 combined_status() {
   local codex claude wrappers=false marker='omarchy-ai-account-switcher command router v1'
+  local current=false outdated=false bypass=false provider
+  local plugin_dir="${OMARCHY_AI_SWITCHER_PLUGIN_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+  local permissions_file="$CONFIG_DIR/command-permissions.json"
   local wrapper_bin="${OMARCHY_AI_SWITCHER_BIN_DIR:-$HOME/.local/bin}"
   local mise_marker='omarchy-ai-account-switcher mise aliases v1'
   local mise_conf_dir="${OMARCHY_AI_SWITCHER_MISE_CONF_DIR:-${MISE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/mise}/conf.d}"
@@ -424,9 +427,24 @@ combined_status() {
     grep -Fq "$mise_marker" "$mise_fragment" 2>/dev/null; then
     wrappers=true
   fi
+  for provider in codex claude; do
+    if [[ -f $wrapper_bin/$provider && ! -L $wrapper_bin/$provider ]] &&
+      grep -Fq "$marker" "$wrapper_bin/$provider" 2>/dev/null &&
+      ! cmp -s -- "$plugin_dir/CommandWrapper.sh" "$wrapper_bin/$provider"; then
+      outdated=true
+    fi
+  done
+  if [[ $wrappers == true && $outdated == false ]]; then current=true; fi
+  if [[ ! -L $CONFIG_DIR && -f $permissions_file && ! -L $permissions_file ]] &&
+    jq -es 'length == 1 and (.[0] | .version == 1 and .bypass == true)' "$permissions_file" >/dev/null 2>&1; then
+    bypass=true
+  fi
   jq -cn --slurpfile codex <(printf '%s\n' "$codex") --slurpfile claude <(printf '%s\n' "$claude") \
-    --argjson wrappers "$wrappers" \
-    '{ok: true, command_wrappers_enabled: $wrappers, providers: {codex: $codex[0], claude: $claude[0]}}'
+    --argjson wrappers "$wrappers" --argjson current "$current" \
+    --argjson outdated "$outdated" --argjson bypass "$bypass" \
+    '{ok: true, command_wrappers_enabled: $wrappers, command_wrappers_current: $current,
+      command_wrappers_outdated: $outdated, permission_bypass_enabled: $bypass,
+      providers: {codex: $codex[0], claude: $claude[0]}}'
 }
 
 import_current() {
@@ -754,6 +772,88 @@ rename_account() {
   jq -cn --arg message "Renamed account to $name" '{ok: true, message: $message}'
 }
 
+prepare_reauth() {
+  local provider=$1 account_id=$2 store_path target login_home
+  store_path=$(provider_store "$provider")
+  validate_account_id "$account_id"
+  lock_store
+  load_store "$store_path"
+  target=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" '.accounts[] | select(.id == $id)')
+  [[ -n $target ]] || fail "Account not found"
+  ensure_private_directory "$CONFIG_DIR/reauth"
+  login_home=$(mktemp -d "$CONFIG_DIR/reauth/$provider-$account_id.XXXXXX")
+  printf '%s' "$target" | jq -c --arg home "$login_home" \
+    '{ok: true, home: $home, name, email, auth_mode}'
+}
+
+complete_reauth() {
+  local provider=$1 account_id=$2 login_home=$3 store_path target candidate home updated index credential
+  store_path=$(provider_store "$provider")
+  validate_account_id "$account_id"
+  lock_store
+  load_store "$store_path"
+  target=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" '.accounts[] | select(.id == $id)')
+  [[ -n $target ]] || fail "Account not found; the saved account was not changed"
+  [[ $(dirname -- "$login_home") == "$CONFIG_DIR/reauth" &&
+    $(basename -- "$login_home") == "$provider-$account_id."* &&
+    -d $login_home && ! -L $login_home && ! -L $CONFIG_DIR/reauth ]] || fail "Invalid sign-in directory"
+  if [[ $provider == codex ]]; then
+    candidate=$(CODEX_HOME="$login_home" codex_current_account)
+  else
+    candidate=$(CLAUDE_CONFIG_DIR="$login_home" claude_current_account false)
+  fi
+  [[ $candidate != null ]] || fail "Sign-in did not produce valid credentials; the saved account was not changed"
+
+  # Check the identity before touching the store or stable home. Workspace IDs
+  # alone may be shared, so also retain the known email when one is available.
+  if ! printf '%s' "$candidate" | jq -e --arg provider "$provider" \
+    --slurpfile target <(printf '%s\n' "$target") '
+      $target[0] as $t |
+      def email_matches: ($t.email // "") == "" or
+        ((.email // "" | ascii_downcase) == ($t.email | ascii_downcase));
+      if $provider == "codex" and $t.auth_mode == "api_key" then
+        .auth_mode == "api_key"
+      else
+        (if $provider == "codex" then $t.auth_data.account_id else $t.oauth_account.accountUuid end) as $expected |
+        (if $provider == "codex" then .auth_data.account_id else .oauth_account.accountUuid end) as $received |
+        (($expected // "") != "" or ($t.email // "") != "") and
+        (($expected // "") == "" or $expected == $received) and email_matches and
+        (if $provider == "codex" then .auth_mode == $t.auth_mode
+         else (.oauth_account | type) == "object" end)
+      end
+    ' >/dev/null; then
+    fail "Signed in to a different account. Sign in again with the saved account; nothing was changed"
+  fi
+  index=$(provider_match_index "$provider" "$candidate")
+  if (( index >= 0 )) && [[ $(printf '%s' "$STORE_JSON" | jq -r --argjson index "$index" '.accounts[$index].id') != "$account_id" ]]; then
+    fail "This login belongs to another saved account; nothing was changed"
+  fi
+  updated=$(printf '%s' "$candidate" | jq -c --slurpfile target <(printf '%s\n' "$target") '
+    .id=$target[0].id | .name=$target[0].name | .created_at=$target[0].created_at |
+    .last_used_at=$target[0].last_used_at')
+  home=$(account_home "$provider" "$account_id")
+  ensure_private_directory "$HOMES_DIR"
+  ensure_private_directory "$HOMES_DIR/$provider"
+  ensure_private_directory "$home"
+  # Preflight every destination before writing either of Claude's two files.
+  local -a credential_files=(auth.json)
+  if [[ $provider == claude ]]; then credential_files=(.credentials.json .claude.json); fi
+  for credential in "${credential_files[@]}"; do
+    [[ ! -L $home/$credential ]] || fail "Refusing to replace symlink: $home/$credential"
+    [[ ! -e $home/$credential || -f $home/$credential ]] || fail "Invalid credential file: $home/$credential"
+  done
+  if [[ $provider == codex ]]; then
+    printf '%s' "$updated" | write_codex_account "$home/auth.json"
+  else
+    printf '%s' "$updated" | write_claude_account "$home"
+    chmod 600 -- "$home/.credentials.json" "$home/.claude.json"
+  fi
+  STORE_JSON=$(printf '%s' "$STORE_JSON" | jq -c --arg id "$account_id" \
+    --slurpfile updated <(printf '%s\n' "$updated") '.accounts |= map(if .id == $id then $updated[0] else . end)')
+  atomic_private_write "$store_path" "$STORE_JSON"
+  jq -cn '{ok: true, message: "Signed in again. Your saved account and history are ready to use."}'
+}
+
 remove_account() {
   local provider=$1 account_id=$2 store_path before after home
   store_path=$(provider_store "$provider")
@@ -940,7 +1040,7 @@ account_usage() {
 }
 
 usage() {
-  printf 'Usage: %s status | usage PROVIDER ID | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
+  printf 'Usage: %s status | usage PROVIDER ID | import-current PROVIDER [NAME] [--inactive] | switch PROVIDER ID | prepare-launch PROVIDER [ID] | prepare-reauth PROVIDER ID | complete-reauth PROVIDER ID LOGIN_HOME | rename PROVIDER ID NAME | remove PROVIDER ID\n' "$0" >&2
   exit 2
 }
 
@@ -981,6 +1081,14 @@ main() {
     rename)
       [[ $# == 4 ]] || usage
       rename_account "$2" "$3" "$4"
+      ;;
+    prepare-reauth)
+      [[ $# == 3 ]] || usage
+      prepare_reauth "$2" "$3"
+      ;;
+    complete-reauth)
+      [[ $# == 4 ]] || usage
+      complete_reauth "$2" "$3" "$4"
       ;;
     remove)
       [[ $# == 3 ]] || usage

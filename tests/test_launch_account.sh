@@ -83,16 +83,18 @@ rg -q '^\[shell_alias\]$' "$mise_fragment"
 rg -Fq "claude = \"$wrapper_bin/claude\"" "$mise_fragment"
 rg -q '^# existing config$' "$switcher_dir/wrapper-backups/mise-conf-fragment.toml"
 env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
-  jq -e '.command_wrappers_enabled == true' >/dev/null
+  jq -e '.command_wrappers_enabled == true and .command_wrappers_current == true
+    and .command_wrappers_outdated == false and .permission_bypass_enabled == false' >/dev/null
+[[ ! -e $switcher_dir/command-permissions.json ]]
 
 plain_codex=$(env "${router_env[@]}" "$wrapper_bin/codex")
-[[ $(tail -n 1 "$test_dir/codex.log") == --dangerously-bypass-approvals-and-sandbox ]]
+[[ -z $(tail -n 1 "$test_dir/codex.log") ]]
 jq -e --arg home "$codex_home" '
   select(.launched == true and .home == $home and .account_id == "codex-one")
 ' <<<"$plain_codex" >/dev/null
 
 plain_claude=$(env "${router_env[@]}" "$wrapper_bin/claude")
-[[ $(tail -n 1 "$test_dir/claude.log") == --dangerously-skip-permissions ]]
+[[ -z $(tail -n 1 "$test_dir/claude.log") ]]
 jq -e --arg home "$claude_home" '
   select(.launched == true and .home == $home and .email == "one@example.com")
 ' <<<"$plain_claude" >/dev/null
@@ -117,6 +119,69 @@ assert_args() {
   fi
 }
 
+assert_passthrough() {
+  local provider=$1 expected
+  shift
+  expected=$(jq -cn --args '$ARGS.positional' -- "$@")
+  assert_args "$provider" "$expected" "$@"
+}
+
+# Default routing is strictly argv-transparent, even for automatic approval,
+# explicit bypass, empty arguments, option-looking prompts and subcommands.
+assert_passthrough codex
+assert_passthrough claude
+assert_passthrough codex --approve-for-me resume --last
+assert_passthrough codex --approve-for-me --sandbox read-only
+assert_passthrough codex --dangerously-bypass-approvals-and-sandbox --no-daemon
+assert_passthrough codex exec '' $'prompt with spaces\nand a newline'
+assert_passthrough codex -- --approve-for-me
+assert_passthrough codex login
+assert_passthrough codex app-server --stdio
+assert_passthrough claude --permission-mode auto 'resume this'
+assert_passthrough claude --permission-mode=auto
+assert_passthrough claude --permission-mode plan
+assert_passthrough claude --dangerously-skip-permissions --resume
+assert_passthrough claude -- --permission-mode=auto
+assert_passthrough claude auth login
+
+# Explicit provider homes and a missing plugin preserve argv too.
+for provider in codex claude; do
+  actual=$(env "${router_env[@]}" CODEX_HOME="$live_codex" CLAUDE_CONFIG_DIR="$live_claude" \
+    FAKE_CODEX_CAPTURE_ARGV=1 FAKE_CLAUDE_CAPTURE_ARGV=1 \
+    "$wrapper_bin/$provider" --approve-for-me --permission-mode auto)
+  jq -e '. == ["--approve-for-me", "--permission-mode", "auto"]' <<<"$actual" >/dev/null
+  actual=$(env "${router_env[@]}" OMARCHY_AI_SWITCHER_PLUGIN_DIR="$test_dir/missing-plugin" \
+    FAKE_CODEX_CAPTURE_ARGV=1 FAKE_CLAUDE_CAPTURE_ARGV=1 "$wrapper_bin/$provider")
+  jq -e '. == []' <<<"$actual" >/dev/null
+done
+
+# Older installed copies are detectable, and updating never creates consent.
+printf '\n# Older installed router\n' >>"$wrapper_bin/codex"
+env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
+  jq -e '.command_wrappers_enabled == true and .command_wrappers_outdated == true
+    and .command_wrappers_current == false and .permission_bypass_enabled == false' >/dev/null
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" install >/dev/null
+cmp -s "$project_dir/CommandWrapper.sh" "$wrapper_bin/codex"
+[[ ! -e $switcher_dir/command-permissions.json ]]
+assert_passthrough codex --approve-for-me
+assert_passthrough claude --permission-mode auto
+
+# The separate opt-in requires an explicit acknowledgment; plain install is
+# insufficient, even when legacy routers previously bypassed permissions.
+if env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" enable-permission-bypass >/dev/null; then
+  echo "Expected permission bypass to require acknowledgment" >&2
+  exit 1
+fi
+[[ ! -e $switcher_dir/command-permissions.json ]]
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" \
+  enable-permission-bypass --accept-disabling-approvals-and-sandbox >/dev/null
+[[ $(stat -c %a "$switcher_dir") == 700 ]]
+[[ $(stat -c %a "$switcher_dir/command-permissions.json") == 600 ]]
+env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
+  jq -e '.command_wrappers_current == true and .permission_bypass_enabled == true' >/dev/null
+
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox"]'
+assert_args claude '["--dangerously-skip-permissions"]'
 assert_args codex '["--dangerously-bypass-approvals-and-sandbox","resume","--last"]' \
   --approve-for-me resume --last
 assert_args codex '["--dangerously-bypass-approvals-and-sandbox","--no-daemon"]' \
@@ -143,6 +208,41 @@ assert_args claude '["--dangerously-skip-permissions","--resume"]' --dangerously
 assert_args claude '["--dangerously-skip-permissions","--","--permission-mode=auto"]' \
   -- --permission-mode=auto
 assert_args claude '["--dangerously-skip-permissions","auth","login"]' auth login
+
+# An ordinary update retains a separately recorded opt-in, and disabling it
+# immediately restores passthrough for future launches of both providers.
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" install >/dev/null
+assert_args codex '["--dangerously-bypass-approvals-and-sandbox"]'
+env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" disable-permission-bypass >/dev/null
+assert_passthrough codex --approve-for-me
+assert_passthrough claude --permission-mode auto
+env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
+  jq -e '.permission_bypass_enabled == false' >/dev/null
+
+# Invalid, unsupported, multi-document, and symlinked preferences fail closed.
+for invalid in 'broken' 'null' '{"version":1,"bypass":"true"}' \
+  '{"version":2,"bypass":true}' '{"version":1,"bypass":true} {}'; do
+  printf '%s\n' "$invalid" >"$switcher_dir/command-permissions.json"
+  assert_passthrough codex --approve-for-me
+  assert_passthrough claude --permission-mode auto
+  env "${router_env[@]}" bash "$project_dir/ai_accounts.sh" status |
+    jq -e '.permission_bypass_enabled == false' >/dev/null
+done
+rm "$switcher_dir/command-permissions.json"
+printf '{"version":1,"bypass":true}\n' >"$test_dir/untouched-permissions.json"
+ln -s "$test_dir/untouched-permissions.json" "$switcher_dir/command-permissions.json"
+assert_passthrough codex --approve-for-me
+assert_passthrough claude --permission-mode auto
+for action in enable-permission-bypass disable-permission-bypass; do
+  options=("$action")
+  if [[ $action == enable-permission-bypass ]]; then options+=(--accept-disabling-approvals-and-sandbox); fi
+  if env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" "${options[@]}" >/dev/null; then
+    echo "Expected refusal to write a symlinked permission preference" >&2
+    exit 1
+  fi
+done
+jq -e '.bypass == true' "$test_dir/untouched-permissions.json" >/dev/null
+rm "$switcher_dir/command-permissions.json"
 
 env "${router_env[@]}" bash "$project_dir/InstallCommandWrappers.sh" remove >/dev/null
 [[ ! -e $wrapper_bin/codex ]]

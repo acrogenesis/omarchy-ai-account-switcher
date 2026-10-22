@@ -16,6 +16,8 @@ Item {
     String(Qt.resolvedUrl("AddClaudeAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string launchPath: decodeURIComponent(
     String(Qt.resolvedUrl("LaunchAccount.sh")).replace(/^file:\/\//, ""))
+  readonly property string reauthPath: decodeURIComponent(
+    String(Qt.resolvedUrl("ReauthenticateAccount.sh")).replace(/^file:\/\//, ""))
   readonly property string wrapperSetupPath: decodeURIComponent(
     String(Qt.resolvedUrl("InstallCommandWrappers.sh")).replace(/^file:\/\//, ""))
 
@@ -32,7 +34,11 @@ Item {
   property int runningCount: 0
   property bool busy: false
   property bool launching: false
+  readonly property bool reauthenticating: reauthProcess.running
   property bool commandWrappersEnabled: false
+  property bool commandWrappersCurrent: false
+  property bool commandWrappersOutdated: false
+  property bool permissionBypassEnabled: false
   property string switchingId: ""
   property string lastError: ""
   property bool hasActionError: false
@@ -139,6 +145,9 @@ Item {
   function applyStatus(payload) {
     root.providerStatuses = payload.providers || ({})
     root.commandWrappersEnabled = payload.command_wrappers_enabled === true
+    root.commandWrappersCurrent = payload.command_wrappers_current === true
+    root.commandWrappersOutdated = payload.command_wrappers_outdated === true
+    root.permissionBypassEnabled = payload.permission_bypass_enabled === true
     root.applyProviderStatus(root.providerStatuses[root.provider])
   }
 
@@ -255,13 +264,38 @@ Item {
     launchProcess.running = true
   }
 
+  function reauthenticateAccount(accountId) {
+    if (root.busy || root.reauthenticating) return "busy"
+    var targetId = String(accountId || root.activeAccountId)
+    var exists = root.accounts.some(function(account) { return account.id === targetId })
+    if (!exists) return "account not found"
+    root.lastError = ""
+    root.hasActionError = false
+    root.lastAction = "Sign-in opened in a terminal."
+    reauthProcess.command = ["omarchy-launch-terminal", "bash", root.reauthPath,
+      root.provider, targetId]
+    reauthProcess.running = true
+    return "started"
+  }
+
   function enableCommandSwitching() {
+    root.configureCommandWrappers(["install"])
+  }
+
+  function setPermissionBypass(enabled) {
+    if (!root.commandWrappersCurrent) return
+    root.configureCommandWrappers(enabled
+      ? ["enable-permission-bypass", "--accept-disabling-approvals-and-sandbox"]
+      : ["disable-permission-bypass"])
+  }
+
+  function configureCommandWrappers(options) {
     if (root.busy || wrapperProcess.running) return
     root.busy = true
     root.lastError = ""
     root.hasActionError = false
     root.lastAction = ""
-    wrapperProcess.command = ["bash", root.wrapperSetupPath, "install"]
+    wrapperProcess.command = ["bash", root.wrapperSetupPath].concat(options)
     wrapperProcess.running = true
   }
 
@@ -329,6 +363,17 @@ Item {
     onExited: refreshTimer.restart()
   }
 
+  property Process reauthProcess: Process {
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.lastAction = ""
+        root.lastError = "Sign-in did not complete. Open Sign in again to retry."
+        root.hasActionError = true
+      }
+      refreshTimer.restart()
+    }
+  }
+
   property Process launchProcess: Process {
     onExited: function(exitCode) {
       root.launching = false
@@ -352,7 +397,7 @@ Item {
         root.hasActionError = false
       } else {
         root.lastError = root.boundedText(payload.error || wrapperError.text,
-          "Could not enable terminal command switching", 320)
+          "Could not update terminal command settings", 320)
         root.hasActionError = true
       }
       root.refresh()

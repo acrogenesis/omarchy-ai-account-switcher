@@ -12,8 +12,14 @@ fi
 if [[ ${1:-} == --dangerously-bypass-approvals-and-sandbox ]]; then shift; fi
 
 if [[ ${1:-} == "login" ]]; then
+  if [[ ${FAKE_LOGIN_FAIL:-0} == 1 ]]; then exit 1; fi
   mkdir -p "$CODEX_HOME"
-  cp "$FAKE_CODEX_AUTH" "$CODEX_HOME/auth.json"
+  if [[ " $* " == *" --with-api-key "* ]]; then
+    IFS= read -r key
+    jq -cn --arg key "$key" '{auth_mode:"api_key",OPENAI_API_KEY:$key}' >"$CODEX_HOME/auth.json"
+  else
+    cp "$FAKE_CODEX_AUTH" "$CODEX_HOME/auth.json"
+  fi
 elif [[ ${1:-} == "app-server" ]]; then
   while IFS= read -r request; do
     if jq -e '.id == 1' >/dev/null 2>&1 <<<"$request"; then
